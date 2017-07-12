@@ -1,5 +1,5 @@
 # qt_swftools
-Libraries and tools to decode and encode SWF animation files.
+Libraries and tools to decode and encode SWF animation files
 
 Copyright (c) 2017 Alexandra Cherdantseva www.github.com/kusharami/qt_swftools
 
