@@ -266,6 +266,68 @@ int Converter::exec()
 	return mResult;
 }
 
+QString Converter::errorMessage() const
+{
+	switch (mResult)
+	{
+		case INPUT_FILE_OPEN_ERROR:
+			return "Unable to SWF file.";
+
+		case INPUT_FILE_FORMAT_ERROR:
+			return "SWF file format error.";
+
+		case INPUT_FILE_BAD_DATA_ERROR:
+			return "Broken SWF file";
+
+		case UNSUPPORTED_SWF_LINESTYLES:
+			return "SWF LineStyles cannot be exported.";
+
+		case UNSUPPORTED_SWF_FILLSTYLE:
+			return QString("SWF FillStyle(0x%2x) cannot be exported.")
+				   .arg(mErrorInfo.toInt());
+
+		case UNSUPPORTED_SWF_SHAPE:
+			return QString("SWF Shape(%d) cannot be exported.")
+				   .arg(mErrorInfo.toInt());
+
+		case UNSUPPORTED_SWF_OBJECT_FLAGS:
+			return QString("SWF object with flags(0x%4x) cannot be exported.")
+				   .arg(mErrorInfo.toInt());
+
+		case UNSUPPORTED_SWF_OBJECT_DEPTH:
+			return QString("SWF object with depth(0x%4x) cannot be exported.")
+				   .arg(mErrorInfo.toInt());
+
+		case UNSUPPORTED_SWF_SHAPE_COUNT:
+			return QString(
+				"SWF has more than 255 shapes and cannot be exported to SAM.")
+				   .arg(mErrorInfo.toInt());
+
+		case UNSUPPORTED_SWF_DISPLAY_COUNT:
+			return QString(
+				"SWF has more than 255 places/removes and "
+				"cannot be exported to SAM.")
+				   .arg(mErrorInfo.toInt());
+
+		case UNSUPPORTED_SWF_ADD_COLOR:
+			return QString(
+				"SWF object(0x%4x)) additional color cannot be exported to SAM.")
+				   .arg(mErrorInfo.toInt());
+
+		case UNSUPPORTED_SWF_TAG:
+		case UNKNOWN_SWF_IMAGE_ID:
+		case UNKNOWN_SWF_SHAPE_ID:
+		case OUTPUT_DIR_ERROR:
+		case OUTPUT_FILE_WRITE_ERROR:
+		case CONFIG_OPEN_ERROR:
+		case CONFIG_PARSE_ERROR:
+		case BAD_SCALE_VALUE:
+			break;
+	}
+
+	return QString();
+}
+
 QString Converter::outputFilePath(const QString &fileName) const
 {
 	QDir outDir(mOutputDirPath);

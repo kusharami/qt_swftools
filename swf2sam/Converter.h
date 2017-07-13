@@ -52,6 +52,8 @@ public:
 
 	int exec();
 
+	QString errorMessage() const;
+
 private:
 	struct Process;
 	friend struct Process;
