@@ -19,6 +19,8 @@
 #include <QtMath>
 #include <QImage>
 #include <QSaveFile>
+#include <QBuffer>
+#include <QDebug>
 
 #include <zlib.h>
 
@@ -39,6 +41,9 @@
 #define MOVEFLAGS_COLOR 0x2000
 #define MOVEFLAGS_MATRIX 0x1000
 #define MOVEFLAGS_LONGCOORDS 0x0800
+
+#define DEPTH_MASK 0x3FF
+#define DEPTH_MAX DEPTH_MASK
 
 #define SAM_SIGN_SIZE 4
 #define SAM_VERSION 1
@@ -113,11 +118,9 @@ void Converter::loadConfigJson(const QByteArray &json)
 	{
 		auto value = it.value();
 
-		auto &oldNames = renameMap[it.key()];
-
 		if (value.isString())
 		{
-			oldNames.append(value.toString());
+			renameMap[value.toString()] = it.key();
 			continue;
 		}
 		if (value.isArray())
@@ -135,7 +138,7 @@ void Converter::loadConfigJson(const QByteArray &json)
 					break;
 				}
 
-				oldNames.append(av.toString());
+				renameMap[av.toString()] = it.key();
 			}
 
 			if (ok)
@@ -154,11 +157,13 @@ struct Image
 	TAG *jpegTables;
 	size_t index;
 
+	QString fileName;
+
 	Image(TAG *tag, TAG *jpegTables, size_t index);
 
 	int id() const;
 
-	bool exportImage(const QString &prefix, QString *imageFileName);
+	int exportImage(const QString &prefix, qreal scale);
 };
 
 struct Shape
@@ -188,11 +193,15 @@ struct Frame
 		RGBA color;
 	};
 
+	using Removes = std::vector<quint16>;
+	using Adds = std::vector<ObjectAdd>;
+	using Moves = std::vector<ObjectMove>;
+
 	QString labelName;
 
-	std::vector<quint16> removes;
-	std::vector<ObjectAdd> adds;
-	std::vector<ObjectMove> moves;
+	Removes removes;
+	Adds adds;
+	Moves moves;
 };
 
 static inline quint8 cxToByte(S16 cx)
@@ -200,461 +209,60 @@ static inline quint8 cxToByte(S16 cx)
 	return quint8((cx / WORD_TO_FLOAT) * 255.0);
 }
 
-int Converter::exec()
+struct Converter::Process
 {
-	mResult = OK;
-
-	if (mScale < 0.1)
-	{
-		mResult = BAD_SCALE_VALUE;
-		return mResult;
-	}
-
-	bool ok;
 	SWF swf;
-	{
-		QFile inputFile(mInputFilePath);
-
-		if (not inputFile.open(QFile::ReadOnly))
-		{
-			mResult = INPUT_FILE_OPEN_ERROR;
-			return mResult;
-		}
-
-		if (not QDir().mkpath(mOutputDirPath))
-		{
-			mResult = OUTPUT_DIR_ERROR;
-			return mResult;
-		}
-
-		reader_t reader;
-		QIODeviceSWFReader::init(&reader, &inputFile);
-
-		ok = swf_ReadSWF2(&reader, &swf) >= 0;
-
-		reader.dealloc(&reader);
-
-		if (not ok)
-		{
-			mResult = INPUT_FILE_FORMAT_ERROR;
-			return mResult;
-		}
-	}
-
 	std::vector<Image> images;
 	std::vector<Shape> shapes;
-	std::vector<Frame> frames(swf.frameCount);
-	TAG *jpegTables = nullptr;
+	std::vector<Frame> frames;
 
 	std::map<int, size_t> imageMap;
 	std::map<int, size_t> shapeMap;
 
-	Frame *currentFrame = &frames.front();
+	LabelRenameMap renames;
 
-	auto tag = swf.firstTag;
-	while (tag && ok)
-	{
-		switch (tag->id)
-		{
-			case ST_FILEATTRIBUTES:
-			case ST_SETBACKGROUNDCOLOR:
-			case ST_SCENEDESCRIPTION:
-				// ignore
-				break;
+	QString prefix;
+	QVariant errorInfo;
 
-			case ST_SHOWFRAME:
-				if (currentFrame == nullptr)
-				{
-					ok = false;
-					mResult = INPUT_FILE_BAD_DATA_ERROR;
-					break;
-				}
+	Converter *owner;
+	Frame *currentFrame;
+	TAG *jpegTables;
+	int result;
 
-				currentFrame++;
-				if (currentFrame > &frames.back())
-				{
-					currentFrame = nullptr;
-				}
-				break;
+	Process(Converter *owner);
+	~Process();
 
-			case ST_FRAMELABEL:
-			{
-				if (currentFrame == nullptr)
-				{
-					ok = false;
-					mResult = INPUT_FILE_BAD_DATA_ERROR;
-					break;
-				}
+	inline int scale(int value, int mode) const;
 
-				auto str = reinterpret_cast<char *>(tag->data);
-				currentFrame->labelName =
-					swf.fileVersion >= 6
-					? QString::fromUtf8(str)
-					: QString::fromLocal8Bit(str);
-				break;
-			}
+	bool handleShowFrame();
+	bool handleFrameLabel(TAG *tag);
+	bool handlePlaceObject(TAG *tag);
+	bool handleRemoveObject(TAG *tag);
+	bool handleImage(TAG *tag);
+	bool handleShape(TAG *tag);
+	bool readSWF();
+	bool parseSWF();
+	bool exportSAM();
 
-			case ST_PLACEOBJECT:
-			case ST_PLACEOBJECT2:
-			case ST_PLACEOBJECT3:
-			{
-				if (currentFrame == nullptr)
-				{
-					ok = false;
-					mResult = INPUT_FILE_BAD_DATA_ERROR;
-					break;
-				}
+	bool writeSAMHeader(QDataStream &stream);
+	bool writeSAMShapes(QDataStream &stream);
+	bool writeSAMFrames(QDataStream &stream);
+	bool writeSAMString(QDataStream &stream, const QString &str);
 
-				SWFPLACEOBJECT srcObj;
-				swf_GetPlaceObject(tag, &srcObj);
+	bool writeSAMFrameRemoves(
+		QDataStream &stream, const Frame::Removes &removes);
+	bool writeSAMFrameAdds(QDataStream &stream, const Frame::Adds &adds);
+	bool writeSAMFrameMoves(QDataStream &stream, const Frame::Moves &moves);
+	bool writeSAMFrameLabel(QDataStream &stream, const QString &labelName);
 
-				if (srcObj.flags & ~(PF_CHAR | PF_CXFORM |
-									 PF_MATRIX | PF_MOVE | PF_NAME))
-				{
-					ok = false;
-					mErrorInfo = srcObj.flags;
-					mResult = UNSUPPORTED_SWF_OBJECT_FLAGS;
-					break;
-				}
+	bool outputStreamOk(QDataStream &stream);
+};
 
-				if (srcObj.depth > 0x3FF)
-				{
-					ok = false;
-					mErrorInfo = srcObj.depth;
-					mResult = UNSUPPORTED_SWF_OBJECT_DEPTH;
-					break;
-				}
-
-				quint16 depth = srcObj.depth;
-
-				if (srcObj.flags & PF_CHAR)
-				{
-					auto shapeIt = shapeMap.find(srcObj.id);
-					if (shapeIt == shapeMap.end() || shapeIt->second > 255)
-					{
-						ok = false;
-						mErrorInfo = srcObj.id;
-						mResult = UNKNOWN_SWF_SHAPE_ID;
-						break;
-					}
-
-					Frame::ObjectAdd add;
-					add.depth = depth;
-					add.shapeId = quint8(shapeIt->second);
-
-					currentFrame->adds.push_back(add);
-				}
-
-				Frame::ObjectMove move;
-				move.depthAndFlags = 0;
-
-				if (srcObj.flags & PF_CXFORM)
-				{
-					if (srcObj.cxform.a1 != 0 ||
-						srcObj.cxform.r1 != 0 ||
-						srcObj.cxform.g1 != 0 ||
-						srcObj.cxform.b1 != 0)
-					{
-						ok = false;
-						mErrorInfo = srcObj.id;
-						mResult = UNSUPPORTED_SWF_ADD_COLOR;
-						break;
-					}
-					move.depthAndFlags |= MOVEFLAGS_COLOR;
-				}
-
-				if (srcObj.flags & PF_MATRIX)
-				{
-					move.depthAndFlags |= MOVEFLAGS_MATRIX;
-				}
-
-				if (move.depthAndFlags != 0)
-				{
-					move.depthAndFlags |= depth;
-					move.matrix = srcObj.matrix;
-
-					move.color.r = cxToByte(srcObj.cxform.r0);
-					move.color.g = cxToByte(srcObj.cxform.g0);
-					move.color.b = cxToByte(srcObj.cxform.b0);
-					move.color.a = cxToByte(srcObj.cxform.a0);
-
-					currentFrame->moves.push_back(move);
-				}
-				break;
-			}
-
-			case ST_REMOVEOBJECT:
-			case ST_REMOVEOBJECT2:
-				if (currentFrame == nullptr)
-				{
-					ok = false;
-					mResult = INPUT_FILE_BAD_DATA_ERROR;
-					break;
-				}
-
-				currentFrame->removes.push_back(quint16(swf_GetDepth(tag)));
-				break;
-
-			case ST_JPEGTABLES:
-				jpegTables = tag;
-				break;
-
-			case ST_DEFINEBITSLOSSLESS:
-			case ST_DEFINEBITSLOSSLESS2:
-			case ST_DEFINEBITSJPEG:
-			case ST_DEFINEBITSJPEG2:
-			case ST_DEFINEBITSJPEG3:
-			{
-				auto index = images.size();
-				images.push_back(Image(tag, jpegTables, index));
-				imageMap[GET16(tag->data)] = index;
-				break;
-			}
-
-			case ST_DEFINESHAPE:
-			case ST_DEFINESHAPE2:
-			case ST_DEFINESHAPE3:
-			case ST_DEFINESHAPE4:
-			{
-				SHAPE2 srcShape;
-
-				swf_ParseDefineShape(tag, &srcShape);
-				int shapeId = GET16(tag->data);
-				mErrorInfo = shapeId;
-
-				if (srcShape.numlinestyles > 0)
-				{
-					ok = false;
-					mResult = UNSUPPORTED_SWF_LINESTYLES;
-					break;
-				}
-
-				Image *img = nullptr;
-
-				auto index = shapes.size();
-				shapes.push_back(Shape(index));
-				shapeMap[shapeId] = index;
-				Shape &shape = shapes.back();
-
-				for (int i = 0; i < srcShape.numfillstyles; i++)
-				{
-					auto &fillStyle = srcShape.fillstyles[i];
-
-					switch (fillStyle.type)
-					{
-						case 0x40:
-						case 0x41:
-						case 0x42:
-						case 0x43:
-						{
-							int imageId = fillStyle.id_bitmap;
-							if (imageId == 65535)
-								continue;
-
-							auto it = imageMap.find(imageId);
-							if (it == imageMap.end())
-							{
-								ok = false;
-								mErrorInfo = imageId;
-								mResult = UNKNOWN_SWF_IMAGE_ID;
-								break;
-							}
-
-							if (nullptr != img)
-							{
-								ok = false;
-								mResult = UNSUPPORTED_SWF_SHAPE;
-								break;
-							}
-
-							shape.imageIndex = it->second;
-							img = &images.at(shape.imageIndex);
-							Q_ASSERT(nullptr != img);
-
-							shape.matrix = fillStyle.m;
-							break;
-						}
-
-						default:
-							ok = false;
-							mErrorInfo = fillStyle.type;
-							mResult = UNSUPPORTED_SWF_FILLSTYLE;
-							break;
-					}
-				}
-
-				if (nullptr == img)
-				{
-					ok = false;
-					mResult = UNSUPPORTED_SWF_SHAPE;
-					break;
-				}
-
-				auto line = srcShape.lines;
-
-				int minX = 0;
-				int minY = 0;
-				int maxX = 0;
-				int maxY = 0;
-				int curX = 0, curY = 0;
-				int lineCount = 0;
-				while (line && ok)
-				{
-					switch (line->type)
-					{
-						case lineTo:
-							if (line != srcShape.lines)
-							{
-								if (line->next == nullptr)
-								{
-									if (lineCount == 4 &&
-										line->y == srcShape.lines->y &&
-										line->x == srcShape.lines->x)
-									{
-										// total lines valid 4
-										// endpoint valid
-										break;
-									}
-								} else
-								{
-									if (line->y == curY && line->x != curX)
-									{
-										curX = line->x;
-										if (curX < minX)
-											minX = curX;
-
-										if (curX > maxX)
-											maxX = curX;
-
-										// horizontal line valid
-										break;
-									}
-
-									if (line->y != curY && line->x == curX)
-									{
-										curY = line->y;
-										if (curY < minY)
-											minY = curY;
-
-										if (curY > maxY)
-											maxY = curY;
-
-										// vertical line valid
-										break;
-									}
-								}
-							}
-
-							ok = false;
-							break;
-
-						case moveTo:
-						{
-							if (line == srcShape.lines)
-							{
-								curX = line->x;
-								curY = line->y;
-								minX = curX;
-								minY = curY;
-								maxX = curX;
-								maxY = curY;
-								break;
-							}
-							// fall through
-						}
-
-						default:
-							ok = false;
-							break;
-					}
-
-					if (ok)
-					{
-						lineCount++;
-						line = line->next;
-					} else
-					{
-						mResult = UNSUPPORTED_SWF_SHAPE;
-					}
-				}
-
-				if (ok)
-				{
-					if (minX != shape.matrix.tx || minY != shape.matrix.ty)
-					{
-						ok = false;
-						mResult = UNSUPPORTED_SWF_SHAPE;
-						break;
-					}
-
-					shape.width = maxX - minX;
-					shape.height = maxY - minY;
-				}
-				break;
-			}
-
-			default:
-				ok = false;
-				mErrorInfo = tag->id;
-				mResult = UNSUPPORTED_SWF_TAG;
-				break;
-		}
-
-		tag = swf_NextTag(tag);
-	}
-
-	if (not ok)
-	{
-		return mResult;
-	}
-
-	auto prefix = outputFilePath(QFileInfo(mInputFilePath).baseName());
-	QSaveFile samFile(prefix + ".sam");
-
-	if (not samFile.open(QFile::WriteOnly | QFile::Truncate))
-	{
-		mErrorInfo = samFile.fileName();
-		mResult = OUTPUT_FILE_WRITE_ERROR;
-		return mResult;
-	}
-
-	do
-	{
-		QDataStream samStream(&samFile);
-		samStream.setByteOrder(QDataStream::LittleEndian);
-
-		SAM_Header header;
-		memcpy(header.signature, SAM_Signature, SAM_SIGN_SIZE);
-		header.version = SAM_VERSION;
-		header.frame_rate = quint8(swf.frameRate >> 8);
-		header.x = scale(swf.movieSize.xmin, FLOOR);
-		header.y = scale(swf.movieSize.ymin, FLOOR);
-		header.width = scale(swf.movieSize.xmax, CEIL) - header.x;
-		header.height = scale(swf.movieSize.ymax, CEIL) - header.y;
-
-		samStream.writeRawData(header.signature, SAM_SIGN_SIZE);
-		samStream << header.version;
-		samStream << header.frame_rate;
-		samStream << header.x;
-		samStream << header.y;
-		samStream << header.width;
-		samStream << header.height;
-
-		samStream << swf.frameCount;
-
-		if (samStream.status() != QDataStream::Ok)
-		{
-			ok = false;
-			break;
-		}
-	} while (false);
-
-	if (not ok || not samFile.commit())
-	{
-		mErrorInfo = samFile.fileName();
-		mResult = OUTPUT_FILE_WRITE_ERROR;
-	}
-
+int Converter::exec()
+{
+	Process process(this);
+	mResult = process.result;
+	mErrorInfo = process.errorInfo;
 	return mResult;
 }
 
@@ -730,47 +338,13 @@ static QByteArray tagInflate(TAG *t, int len)
 	return result;
 }
 
-bool Image::exportImage(const QString &prefix, QString *imageFileName)
+int Image::exportImage(const QString &prefix, qreal scale)
 {
-	static const QString nameFmt("%2_%3.%1");
+	static const QString nameFmt("%1_%2.png");
 
-	QString imageFilePath;
-	switch (tag->id)
-	{
-		case ST_DEFINEBITSLOSSLESS:
-		case ST_DEFINEBITSLOSSLESS2:
-		case ST_DEFINEBITSJPEG3:
-			imageFilePath = nameFmt.arg("png");
-			break;
+	auto imageFilePath = nameFmt.arg(prefix).arg(index + 1, 4, 10, QChar('0'));
 
-		case ST_DEFINEBITSJPEG:
-		case ST_DEFINEBITSJPEG2:
-			imageFilePath = nameFmt.arg("jpg");
-			break;
-
-		default:
-			return false;
-	}
-
-	imageFilePath = imageFilePath.arg(prefix).arg(index + 1, 4, 10, QChar('0'));
-
-	if (not QDir().mkpath(QFileInfo(prefix).path()))
-	{
-		return false;
-	}
-
-	QSaveFile file(imageFilePath);
-
-	if (not file.open(QFile::WriteOnly | QFile::Truncate))
-	{
-		return false;
-	}
-
-	QFileInfo fileInfo(imageFilePath);
-	if (nullptr != imageFileName)
-	{
-		*imageFileName = fileInfo.fileName();
-	}
+	fileName = QFileInfo(imageFilePath).fileName();
 
 	int writeLen;
 	int tagEnd = tag->len;
@@ -779,9 +353,17 @@ bool Image::exportImage(const QString &prefix, QString *imageFileName)
 
 	switch (tag->id)
 	{
+		default:
+			Q_UNREACHABLE();
+			break;
+
 		case ST_DEFINEBITSJPEG:
 		case ST_DEFINEBITSJPEG2:
 		{
+			QBuffer jpegBuffer;
+
+			jpegBuffer.open(QBuffer::WriteOnly);
+
 			int skip = 2;
 			switch (tag->id)
 			{
@@ -791,11 +373,11 @@ bool Image::exportImage(const QString &prefix, QString *imageFileName)
 					{
 						writeLen = jpegTables->len - 2;
 						skip += 2;
-						if (file.write(
+						if (jpegBuffer.write(
 								reinterpret_cast<char *>(jpegTables->data),
 								writeLen) != writeLen)
 						{
-							return false;
+							return Converter::OUTPUT_FILE_WRITE_ERROR;
 						}
 					}
 					break;
@@ -809,11 +391,11 @@ bool Image::exportImage(const QString &prefix, QString *imageFileName)
 					{
 						writeLen = pos;
 
-						if (file.write(
+						if (jpegBuffer.write(
 								reinterpret_cast<char *>(&tag->data[2]),
 								writeLen) != writeLen)
 						{
-							return false;
+							return Converter::OUTPUT_FILE_WRITE_ERROR;
 						}
 
 						skip += pos + 4;
@@ -823,12 +405,24 @@ bool Image::exportImage(const QString &prefix, QString *imageFileName)
 			}
 
 			writeLen = tagEnd - skip;
-			if (writeLen > 0 && file.write(
+			if (writeLen > 0 && jpegBuffer.write(
 					reinterpret_cast<char *>(&tag->data[skip]),
 					writeLen) != writeLen)
 			{
-				return false;
+				return Converter::OUTPUT_FILE_WRITE_ERROR;
 			}
+
+			jpegBuffer.close();
+
+			auto &bytes = jpegBuffer.buffer();
+
+			image = QImage::fromData(
+					reinterpret_cast<const quint8 *>(
+						bytes.constData()), bytes.count());
+
+			if (image.isNull())
+				return Converter::INPUT_FILE_BAD_DATA_ERROR;
+
 			break;
 		}
 
@@ -841,7 +435,7 @@ bool Image::exportImage(const QString &prefix, QString *imageFileName)
 				image = QImage::fromData(&tag->data[6], end);
 
 				if (image.isNull())
-					return false;
+					return Converter::INPUT_FILE_BAD_DATA_ERROR;
 
 				end += 6;
 
@@ -859,11 +453,13 @@ bool Image::exportImage(const QString &prefix, QString *imageFileName)
 							&tag->data[end],
 							uLong(compressedAlphaSize)))
 					{
-						return false;
+						return Converter::INPUT_FILE_BAD_DATA_ERROR;
 					}
 
 					if (uncompressedSize != uLong(alphaSize))
-						return false;
+					{
+						return Converter::INPUT_FILE_BAD_DATA_ERROR;
+					}
 
 					image = image.convertToFormat(QImage::Format_RGBA8888);
 
@@ -923,7 +519,7 @@ bool Image::exportImage(const QString &prefix, QString *imageFileName)
 				}
 
 				default:
-					return false;
+					return Converter::INPUT_FILE_BAD_DATA_ERROR;
 			}
 
 			int widthBytes = width * (bpp / 8);
@@ -995,11 +591,43 @@ bool Image::exportImage(const QString &prefix, QString *imageFileName)
 		}
 	}
 
-	if (not image.isNull() && not image.save(&file, "png"))
+	Q_ASSERT(not image.isNull());
+
+	int scaledWidth = qCeil(image.width() * scale);
+	int scaledHeight = qCeil(image.height() * scale);
+
+	if (scaledWidth <= 0 || scaledWidth > 16386 ||
+		scaledHeight <= 0 || scaledHeight > 16386)
 	{
-		return false;
+		return Converter::BAD_SCALE_VALUE;
 	}
-	return file.commit();
+
+	if (scaledWidth != image.width() || scaledHeight != image.height())
+	{
+		image = image.scaled(
+				scaledWidth, scaledHeight,
+				Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+	}
+
+	if (not QDir().mkpath(QFileInfo(prefix).path()))
+	{
+		return Converter::OUTPUT_DIR_ERROR;
+	}
+
+	QSaveFile file(imageFilePath);
+
+	if (not file.open(QFile::WriteOnly | QFile::Truncate))
+	{
+		return Converter::OUTPUT_FILE_WRITE_ERROR;
+	}
+
+	if (not image.save(&file, "png") || not file.commit())
+	{
+		return Converter::OUTPUT_FILE_WRITE_ERROR;
+	}
+
+	qInfo().noquote() << fileName;
+	return Converter::OK;
 }
 
 Shape::Shape(size_t index)
@@ -1011,4 +639,842 @@ Shape::Shape(size_t index)
 	memset(&matrix, 0, sizeof(MATRIX));
 	matrix.sx = 65536 * TWIPS_PER_PIXEL;
 	matrix.sy = 65536 * TWIPS_PER_PIXEL;
+}
+
+bool Converter::Process::handleShowFrame()
+{
+	if (currentFrame == nullptr)
+	{
+		result = INPUT_FILE_BAD_DATA_ERROR;
+		return false;
+	}
+
+	currentFrame++;
+	if (currentFrame > &frames.back())
+	{
+		currentFrame = nullptr;
+	}
+
+	return true;
+}
+
+bool Converter::Process::handleFrameLabel(TAG *tag)
+{
+	if (currentFrame == nullptr)
+	{
+		result = INPUT_FILE_BAD_DATA_ERROR;
+		return false;
+	}
+
+	auto str = reinterpret_cast<char *>(tag->data);
+	auto labelName =
+		swf.fileVersion >= 6
+		? QString::fromUtf8(str)
+		: QString::fromLocal8Bit(str);
+
+	auto &renameMap = owner->mLabelRenameMap;
+	auto it = renameMap.find(labelName);
+	if (it != renameMap.end())
+	{
+		currentFrame->labelName = it->second;
+	} else
+	{
+		currentFrame->labelName = labelName;
+	}
+
+	renames[labelName] = currentFrame->labelName;
+
+	return true;
+}
+
+bool Converter::Process::handlePlaceObject(TAG *tag)
+{
+	if (currentFrame == nullptr)
+	{
+		result = INPUT_FILE_BAD_DATA_ERROR;
+		return false;
+	}
+
+	SWFPLACEOBJECT srcObj;
+	swf_GetPlaceObject(tag, &srcObj);
+
+	if (srcObj.flags & ~(PF_CHAR | PF_CXFORM |
+						 PF_MATRIX | PF_MOVE | PF_NAME))
+	{
+		errorInfo = srcObj.flags;
+		result = UNSUPPORTED_SWF_OBJECT_FLAGS;
+		return false;
+	}
+
+	if (srcObj.depth > DEPTH_MAX)
+	{
+		errorInfo = srcObj.depth;
+		result = UNSUPPORTED_SWF_OBJECT_DEPTH;
+		return false;
+	}
+
+	quint16 depth = srcObj.depth;
+
+	bool placeObject1 = (tag->id == ST_PLACEOBJECT);
+
+	bool shouldMove = (placeObject1 ||
+					   0 != (srcObj.flags & PF_MOVE));
+
+	if (placeObject1 || 0 != (srcObj.flags & PF_CHAR))
+	{
+		if (shouldMove)
+		{
+			if (placeObject1)
+			{
+				errorInfo = srcObj.flags;
+				result = UNSUPPORTED_SWF_OBJECT_FLAGS;
+				return false;
+			}
+
+			auto &removes = currentFrame->removes;
+
+			if (removes.size() == 255)
+			{
+				result = UNSUPPORTED_SWF_DISPLAY_COUNT;
+				return false;
+			}
+
+			removes.push_back(depth);
+		}
+
+		auto shapeIt = shapeMap.find(srcObj.id);
+		if (shapeIt == shapeMap.end() || shapeIt->second > 255)
+		{
+			errorInfo = srcObj.id;
+			result = UNKNOWN_SWF_SHAPE_ID;
+			return false;
+		}
+
+		Frame::ObjectAdd add;
+		add.depth = depth;
+		add.shapeId = quint8(shapeIt->second);
+
+		auto &adds = currentFrame->adds;
+		if (adds.size() == 255)
+		{
+
+			result = UNSUPPORTED_SWF_DISPLAY_COUNT;
+			return false;
+		}
+
+		adds.push_back(add);
+	}
+
+	Frame::ObjectMove move;
+	move.depthAndFlags = 0;
+
+	if (placeObject1 || 0 != (srcObj.flags & PF_CXFORM))
+	{
+		if (srcObj.cxform.a1 != 0 ||
+			srcObj.cxform.r1 != 0 ||
+			srcObj.cxform.g1 != 0 ||
+			srcObj.cxform.b1 != 0)
+		{
+			errorInfo = srcObj.id;
+			result = UNSUPPORTED_SWF_ADD_COLOR;
+			return false;
+		}
+		move.depthAndFlags |= MOVEFLAGS_COLOR;
+	}
+
+	if (placeObject1 || 0 != (srcObj.flags & PF_MATRIX))
+	{
+		move.depthAndFlags |= MOVEFLAGS_MATRIX;
+	}
+
+	if (move.depthAndFlags != 0)
+	{
+		move.depthAndFlags |= depth;
+		move.matrix = srcObj.matrix;
+
+		move.color.r = cxToByte(srcObj.cxform.r0);
+		move.color.g = cxToByte(srcObj.cxform.g0);
+		move.color.b = cxToByte(srcObj.cxform.b0);
+		move.color.a = cxToByte(srcObj.cxform.a0);
+
+		auto &moves = currentFrame->moves;
+		if (moves.size() == 255)
+		{
+			result = UNSUPPORTED_SWF_DISPLAY_COUNT;
+			return false;
+		}
+
+		moves.push_back(move);
+	}
+
+	return true;
+}
+
+bool Converter::Process::handleRemoveObject(TAG *tag)
+{
+	if (currentFrame == nullptr)
+	{
+		result = INPUT_FILE_BAD_DATA_ERROR;
+		return false;
+	}
+
+	auto &removes = currentFrame->removes;
+
+	if (removes.size() == 255)
+	{
+		result = UNSUPPORTED_SWF_DISPLAY_COUNT;
+		return false;
+	}
+
+	removes.push_back(quint16(swf_GetDepth(tag)));
+
+	return true;
+}
+
+bool Converter::Process::handleImage(TAG *tag)
+{
+	auto index = images.size();
+	images.push_back(Image(tag, jpegTables, index));
+	imageMap[GET16(tag->data)] = index;
+
+	Image &image = images.back();
+	result = image.exportImage(prefix, owner->mScale);
+
+	switch (result)
+	{
+		case OK:
+			break;
+
+		case BAD_SCALE_VALUE:
+		case INPUT_FILE_BAD_DATA_ERROR:
+		case OUTPUT_DIR_ERROR:
+			return false;
+
+		case OUTPUT_FILE_WRITE_ERROR:
+			errorInfo = QDir(owner->mOutputDirPath).filePath(image.fileName);
+			return false;
+
+		default:
+			Q_UNREACHABLE();
+			return false;
+	}
+
+	return true;
+}
+
+bool Converter::Process::handleShape(TAG *tag)
+{
+	SHAPE2 srcShape;
+
+	swf_ParseDefineShape(tag, &srcShape);
+	int shapeId = GET16(tag->data);
+	errorInfo = shapeId;
+
+	if (srcShape.numlinestyles > 0)
+	{
+		result = UNSUPPORTED_SWF_LINESTYLES;
+		return false;
+	}
+
+	Image *img = nullptr;
+
+	auto index = shapes.size();
+
+	if (index == 255)
+	{
+		result = UNSUPPORTED_SWF_SHAPE_COUNT;
+		return false;
+	}
+
+	shapes.push_back(Shape(index));
+	shapeMap[shapeId] = index;
+	Shape &shape = shapes.back();
+
+	for (int i = 0; i < srcShape.numfillstyles; i++)
+	{
+		auto &fillStyle = srcShape.fillstyles[i];
+
+		switch (fillStyle.type)
+		{
+			case 0x40:
+			case 0x41:
+			case 0x42:
+			case 0x43:
+			{
+				int imageId = fillStyle.id_bitmap;
+				if (imageId == 65535)
+					continue;
+
+				auto it = imageMap.find(imageId);
+				if (it == imageMap.end())
+				{
+					errorInfo = imageId;
+					result = UNKNOWN_SWF_IMAGE_ID;
+					return false;
+				}
+
+				if (nullptr != img)
+				{
+					result = UNSUPPORTED_SWF_SHAPE;
+					return false;
+				}
+
+				shape.imageIndex = it->second;
+				img = &images.at(shape.imageIndex);
+				Q_ASSERT(nullptr != img);
+
+				shape.matrix = fillStyle.m;
+				break;
+			}
+
+			default:
+				errorInfo = fillStyle.type;
+				result = UNSUPPORTED_SWF_FILLSTYLE;
+				return false;
+		}
+	}
+
+	if (nullptr == img)
+	{
+		result = UNSUPPORTED_SWF_SHAPE;
+		return false;
+	}
+
+	auto line = srcShape.lines;
+
+	int minX = 0;
+	int minY = 0;
+	int maxX = 0;
+	int maxY = 0;
+	int curX = 0, curY = 0;
+	int lineCount = 0;
+	bool ok = true;
+	while (line && ok)
+	{
+		switch (line->type)
+		{
+			case lineTo:
+				if (line != srcShape.lines)
+				{
+					if (line->next == nullptr)
+					{
+						if (lineCount == 4 &&
+							line->y == srcShape.lines->y &&
+							line->x == srcShape.lines->x)
+						{
+							// total lines valid 4
+							// endpoint valid
+							break;
+						}
+					} else
+					{
+						if (line->y == curY && line->x != curX)
+						{
+							curX = line->x;
+							if (curX < minX)
+								minX = curX;
+
+							if (curX > maxX)
+								maxX = curX;
+
+							// horizontal line valid
+							break;
+						}
+
+						if (line->y != curY && line->x == curX)
+						{
+							curY = line->y;
+							if (curY < minY)
+								minY = curY;
+
+							if (curY > maxY)
+								maxY = curY;
+
+							// vertical line valid
+							break;
+						}
+					}
+				}
+
+				ok = false;
+				break;
+
+			case moveTo:
+			{
+				if (line == srcShape.lines)
+				{
+					curX = line->x;
+					curY = line->y;
+					minX = curX;
+					minY = curY;
+					maxX = curX;
+					maxY = curY;
+					break;
+				}
+				// fall through
+			}
+
+			default:
+				ok = false;
+				break;
+		}
+
+		if (ok)
+		{
+			lineCount++;
+			line = line->next;
+		} else
+		{
+			result = UNSUPPORTED_SWF_SHAPE;
+		}
+	}
+
+	if (ok)
+	{
+		if (minX == shape.matrix.tx && minY == shape.matrix.ty)
+		{
+			shape.width = maxX - minX;
+			shape.height = maxY - minY;
+			return true;
+		}
+
+		result = UNSUPPORTED_SWF_SHAPE;
+	}
+
+	return false;
+}
+
+bool Converter::Process::readSWF()
+{
+	QFile inputFile(owner->mInputFilePath);
+
+	if (not inputFile.open(QFile::ReadOnly))
+	{
+		result = INPUT_FILE_OPEN_ERROR;
+		return false;
+	}
+
+	if (not QDir().mkpath(owner->mOutputDirPath))
+	{
+		result = OUTPUT_DIR_ERROR;
+		return false;
+	}
+
+	reader_t reader;
+	QIODeviceSWFReader::init(&reader, &inputFile);
+
+	bool ok = swf_ReadSWF2(&reader, &swf) >= 0;
+
+	reader.dealloc(&reader);
+
+	if (not ok)
+	{
+		result = INPUT_FILE_FORMAT_ERROR;
+	}
+
+	return ok;
+}
+
+bool Converter::Process::parseSWF()
+{
+	frames.resize(swf.frameCount);
+
+	currentFrame = &frames.front();
+
+	auto tag = swf.firstTag;
+	bool ok = true;
+	while (tag && ok)
+	{
+		switch (tag->id)
+		{
+			case ST_FILEATTRIBUTES:
+			case ST_SETBACKGROUNDCOLOR:
+			case ST_SCENEDESCRIPTION:
+			case ST_END:
+				// ignore
+				break;
+
+			case ST_SHOWFRAME:
+				ok = handleShowFrame();
+				break;
+
+			case ST_FRAMELABEL:
+				ok = handleFrameLabel(tag);
+				break;
+
+			case ST_PLACEOBJECT:
+			case ST_PLACEOBJECT2:
+			case ST_PLACEOBJECT3:
+				ok = handlePlaceObject(tag);
+				break;
+
+			case ST_REMOVEOBJECT:
+			case ST_REMOVEOBJECT2:
+				ok = handleRemoveObject(tag);
+				break;
+
+			case ST_JPEGTABLES:
+				jpegTables = tag;
+				break;
+
+			case ST_DEFINEBITSLOSSLESS:
+			case ST_DEFINEBITSLOSSLESS2:
+			case ST_DEFINEBITSJPEG:
+			case ST_DEFINEBITSJPEG2:
+			case ST_DEFINEBITSJPEG3:
+				ok = handleImage(tag);
+				break;
+
+			case ST_DEFINESHAPE:
+			case ST_DEFINESHAPE2:
+			case ST_DEFINESHAPE3:
+			case ST_DEFINESHAPE4:
+				ok = handleShape(tag);
+				break;
+
+			default:
+				ok = false;
+				errorInfo = tag->id;
+				result = UNSUPPORTED_SWF_TAG;
+				break;
+		}
+
+		tag = swf_NextTag(tag);
+	}
+
+	return ok;
+}
+
+bool Converter::Process::exportSAM()
+{
+	QSaveFile samFile(prefix + ".sam");
+
+	errorInfo = samFile.fileName();
+	if (not samFile.open(QFile::WriteOnly | QFile::Truncate))
+	{
+		result = OUTPUT_FILE_WRITE_ERROR;
+		return false;
+	}
+
+	{
+		QDataStream stream(&samFile);
+		stream.setByteOrder(QDataStream::LittleEndian);
+
+		if (not writeSAMHeader(stream) ||
+			not writeSAMShapes(stream) ||
+			not writeSAMFrames(stream))
+		{
+			return false;
+		}
+	}	// close data stream
+
+	if (not samFile.commit())
+	{
+		result = OUTPUT_FILE_WRITE_ERROR;
+		return false;
+	}
+
+	qInfo().noquote() << QFileInfo(samFile.fileName()).fileName();
+	qInfo().noquote() << QString("Labels:");
+	for (auto &it : renames)
+	{
+		if (it.first != it.second)
+		{
+			qInfo().noquote() << QString("%1 -> %2").arg(it.first, it.second);
+		} else
+		{
+			qInfo().noquote() << it.first;
+		}
+	}
+	return true;
+}
+
+bool Converter::Process::writeSAMHeader(QDataStream &stream)
+{
+	SAM_Header header;
+	memcpy(header.signature, SAM_Signature, SAM_SIGN_SIZE);
+	header.version = SAM_VERSION;
+	header.frame_rate = quint8(swf.frameRate >> 8);
+	header.x = scale(swf.movieSize.xmin, FLOOR);
+	header.y = scale(swf.movieSize.ymin, FLOOR);
+	header.width = scale(swf.movieSize.xmax, CEIL) - header.x;
+	header.height = scale(swf.movieSize.ymax, CEIL) - header.y;
+
+	stream.writeRawData(header.signature, SAM_SIGN_SIZE);
+	stream << header.version;
+	stream << header.frame_rate;
+	stream << header.x;
+	stream << header.y;
+	stream << header.width;
+	stream << header.height;
+
+	return outputStreamOk(stream);
+}
+
+bool Converter::Process::writeSAMShapes(QDataStream &stream)
+{
+	Q_ASSERT(shapes.size() <= 65535);
+	auto shapeCount = quint16(shapes.size());
+
+	stream << shapeCount;
+
+	if (not outputStreamOk(stream))
+		return false;
+
+	for (const Shape &shape : shapes)
+	{
+		const Image &image = images.at(shape.imageIndex);
+
+		int scaledWidth = qCeil(
+				(shape.width * owner->mScale) / TWIPS_PER_PIXELF);
+		int scaledHeight = qCeil(
+				(shape.height * owner->mScale) / TWIPS_PER_PIXELF);
+
+		int scaledX = scale(shape.matrix.tx, CEIL);
+		int scaledY = scale(shape.matrix.ty, CEIL);
+
+		if (scaledWidth <= 0 || scaledWidth > 65535 ||
+			scaledHeight <= 0 || scaledHeight > 65535 ||
+			scaledX < -32768 || scaledX > 32767 ||
+			scaledY < -32768 || scaledY > 32767)
+		{
+			result = BAD_SCALE_VALUE;
+			return false;
+		}
+
+		if (not writeSAMString(stream, image.fileName))
+			return false;
+
+		stream << quint16(scaledWidth);
+		stream << quint16(scaledHeight);
+		stream << qint32(shape.matrix.sx);
+		stream << qint32(shape.matrix.r1);
+		stream << qint32(shape.matrix.r0);
+		stream << qint32(shape.matrix.sy);
+		stream << qint16(scaledX);
+		stream << qint16(scaledY);
+
+		if (not outputStreamOk(stream))
+			return false;
+	}
+
+	return true;
+}
+
+bool Converter::Process::writeSAMFrames(QDataStream &stream)
+{
+	stream << swf.frameCount;
+
+	if (not outputStreamOk(stream))
+		return false;
+
+	for (const Frame &frame : frames)
+	{
+		auto &removes = frame.removes;
+		auto &adds = frame.adds;
+		auto &moves = frame.moves;
+		auto &labelName = frame.labelName;
+
+		quint8 flags = 0;
+
+		if (not removes.empty())
+			flags |= FRAMEFLAGS_REMOVES;
+
+		if (not adds.empty())
+			flags |= FRAMEFLAGS_ADDS;
+
+		if (not moves.empty())
+			flags |= FRAMEFLAGS_MOVES;
+
+		if (not labelName.isEmpty())
+			flags |= FRAMEFLAGS_FRAME_NAME;
+
+		stream << flags;
+
+		if (not outputStreamOk(stream) ||
+			not writeSAMFrameRemoves(stream, removes) ||
+			not writeSAMFrameAdds(stream, adds) ||
+			not writeSAMFrameMoves(stream, moves) ||
+			not writeSAMFrameLabel(stream, labelName))
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool Converter::Process::writeSAMString(
+	QDataStream &stream, const QString &str)
+{
+	auto utf8 = str.toUtf8();
+
+	int strLen = utf8.size();
+	if (strLen > 65535)
+	{
+		result = OUTPUT_FILE_WRITE_ERROR;
+		return false;
+	}
+
+	stream << quint16(strLen);
+	stream.writeRawData(utf8.data(), strLen);
+
+	return outputStreamOk(stream);
+}
+
+bool Converter::Process::writeSAMFrameRemoves(
+	QDataStream &stream, const Frame::Removes &removes)
+{
+	if (removes.empty())
+		return true;
+
+	Q_ASSERT(removes.size() <= 255);
+
+	stream << quint8(removes.size());
+	for (quint16 depth : removes)
+	{
+		stream << depth;
+	}
+
+	return outputStreamOk(stream);
+}
+
+bool Converter::Process::writeSAMFrameAdds(
+	QDataStream &stream, const Frame::Adds &adds)
+{
+	if (adds.empty())
+		return true;
+
+	Q_ASSERT(adds.size() <= 255);
+
+	stream << quint8(adds.size());
+
+	for (const Frame::ObjectAdd &add : adds)
+	{
+		stream << add.depth;
+		stream << add.shapeId;
+	}
+
+	return outputStreamOk(stream);
+}
+
+bool Converter::Process::writeSAMFrameMoves(
+	QDataStream &stream, const Frame::Moves &moves)
+{
+	if (moves.empty())
+		return true;
+
+	Q_ASSERT(moves.size() <= 255);
+
+	stream << quint8(moves.size());
+	if (not outputStreamOk(stream))
+		return false;
+
+	for (const Frame::ObjectMove &move : moves)
+	{
+		quint16 depthAndFlags =
+			move.depthAndFlags &
+			(DEPTH_MASK | MOVEFLAGS_MATRIX | MOVEFLAGS_COLOR);
+
+		int scaledX = 0, scaledY = 0;
+		if (depthAndFlags & MOVEFLAGS_MATRIX)
+		{
+			scaledX = scale(move.matrix.tx, CEIL);
+			scaledY = scale(move.matrix.ty, CEIL);
+
+			if (move.matrix.sx == 65536 &&
+				move.matrix.sy == 65536 &&
+				move.matrix.r0 == 0 &&
+				move.matrix.r1 == 0)
+			{
+				depthAndFlags &= ~MOVEFLAGS_MATRIX;
+			}
+
+			if (scaledX > 32767 || scaledX < -32768 ||
+				scaledY > 32767 || scaledY < -32768)
+			{
+				depthAndFlags |= MOVEFLAGS_LONGCOORDS;
+			}
+		}
+
+		stream << depthAndFlags;
+		if (depthAndFlags & MOVEFLAGS_MATRIX)
+		{
+			stream << qint32(move.matrix.sx);
+			stream << qint32(move.matrix.r1);
+			stream << qint32(move.matrix.r0);
+			stream << qint32(move.matrix.sy);
+		}
+
+		if (depthAndFlags & MOVEFLAGS_LONGCOORDS)
+		{
+			stream << qint32(scaledX);
+			stream << qint32(scaledY);
+		} else
+		{
+			stream << qint16(scaledX);
+			stream << qint16(scaledY);
+		}
+
+		if (depthAndFlags & MOVEFLAGS_COLOR)
+		{
+			stream << move.color.r;
+			stream << move.color.g;
+			stream << move.color.b;
+			stream << move.color.a;
+		}
+
+		if (not outputStreamOk(stream))
+			return false;
+	}
+
+	return true;
+}
+
+bool Converter::Process::writeSAMFrameLabel(
+	QDataStream &stream, const QString &labelName)
+{
+	if (labelName.isEmpty())
+		return true;
+
+	return writeSAMString(stream, labelName);
+}
+
+bool Converter::Process::outputStreamOk(QDataStream &stream)
+{
+	if (stream.status() == QDataStream::Ok)
+		return true;
+
+	result = OUTPUT_FILE_WRITE_ERROR;
+	return false;
+}
+
+Converter::Process::Process(Converter *owner)
+	: owner(owner)
+	, currentFrame(nullptr)
+	, jpegTables(nullptr)
+	, result(OK)
+{
+	memset(&swf, 0, sizeof(SWF));
+
+	if (owner->mScale <= 0.1)
+	{
+		result = BAD_SCALE_VALUE;
+		return;
+	}
+
+	prefix = owner->outputFilePath(
+			QFileInfo(owner->mInputFilePath).baseName());
+
+	readSWF() && parseSWF() && exportSAM();
+}
+
+Converter::Process::~Process()
+{
+	swf_FreeTags(&swf);
+}
+
+int Converter::Process::scale(int value, int mode) const
+{
+	return owner->scale(value, mode);
 }

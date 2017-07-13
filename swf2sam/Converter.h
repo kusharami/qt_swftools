@@ -25,6 +25,8 @@ public:
 		UNSUPPORTED_SWF_SHAPE,
 		UNSUPPORTED_SWF_OBJECT_FLAGS,
 		UNSUPPORTED_SWF_OBJECT_DEPTH,
+		UNSUPPORTED_SWF_SHAPE_COUNT,
+		UNSUPPORTED_SWF_DISPLAY_COUNT,
 		UNSUPPORTED_SWF_ADD_COLOR,
 		UNSUPPORTED_SWF_TAG,
 		UNKNOWN_SWF_IMAGE_ID,
@@ -38,7 +40,7 @@ public:
 
 	Converter();
 
-	using LabelRenameMap = std::map<QString, QStringList>;
+	using LabelRenameMap = std::map<QString, QString>;
 
 	void setScale(qreal value);
 	void setLabelRenameMap(const LabelRenameMap &value);
@@ -51,6 +53,9 @@ public:
 	int exec();
 
 private:
+	struct Process;
+	friend struct Process;
+
 	QString outputFilePath(const QString &fileName) const;
 
 	enum
