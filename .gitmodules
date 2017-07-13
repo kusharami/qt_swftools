@@ -1,0 +1,3 @@
+[submodule "thirdparty/swftools"]
+	path = thirdparty/swftools
+	url = https://github.com/kusharami/swftools
