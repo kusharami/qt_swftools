@@ -271,7 +271,7 @@ QString Converter::errorMessage() const
 	switch (mResult)
 	{
 		case INPUT_FILE_OPEN_ERROR:
-			return "Unable to SWF file.";
+			return "Unable to open SWF file.";
 
 		case INPUT_FILE_FORMAT_ERROR:
 			return "SWF file format error.";
