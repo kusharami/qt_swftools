@@ -42,6 +42,7 @@ public:
 
 	using LabelRenameMap = std::map<QString, QString>;
 
+	void setSkipUnsupported(bool skip);
 	void setScale(qreal value);
 	void setLabelRenameMap(const LabelRenameMap &value);
 	void setInputFilePath(const QString &path);
@@ -73,8 +74,14 @@ private:
 	QString mOutputDirPath;
 	LabelRenameMap mLabelRenameMap;
 	qreal mScale;
+	bool mSkipUnsupported;
 	int mResult;
 };
+
+inline void Converter::setSkipUnsupported(bool skip)
+{
+	mSkipUnsupported = skip;
+}
 
 inline void Converter::setScale(qreal value)
 {
