@@ -157,6 +157,8 @@ struct Image
 	TAG *jpegTables;
 	size_t index;
 
+	QVariant errorInfo;
+
 	QString fileName;
 
 	Image(TAG *tag, TAG *jpegTables, size_t index);
@@ -277,7 +279,8 @@ QString Converter::errorMessage() const
 			return "SWF file format error.";
 
 		case INPUT_FILE_BAD_DATA_ERROR:
-			return "Broken SWF file";
+			return QString("Broken SWF file (%1).")
+				   .arg(mErrorInfo.toString());
 
 		case UNSUPPORTED_LINESTYLES:
 			return "Cannot export line styles to SAM.";
@@ -505,7 +508,10 @@ int Image::exportImage(const QString &prefix, qreal scale)
 						bytes.constData()), bytes.count());
 
 			if (image.isNull())
+			{
+				errorInfo = QString("Jpeg load failed");
 				return Converter::INPUT_FILE_BAD_DATA_ERROR;
+			}
 
 			break;
 		}
@@ -519,7 +525,10 @@ int Image::exportImage(const QString &prefix, qreal scale)
 				image = QImage::fromData(&tag->data[6], end);
 
 				if (image.isNull())
+				{
+					errorInfo = QString("Jpeg load failed");
 					return Converter::INPUT_FILE_BAD_DATA_ERROR;
+				}
 
 				end += 6;
 
@@ -537,11 +546,13 @@ int Image::exportImage(const QString &prefix, qreal scale)
 							&tag->data[end],
 							uLong(compressedAlphaSize)))
 					{
+						errorInfo = QString("Jpeg alpha failed");
 						return Converter::INPUT_FILE_BAD_DATA_ERROR;
 					}
 
 					if (uncompressedSize != uLong(alphaSize))
 					{
+						errorInfo = QString("Jpeg alpha failed");
 						return Converter::INPUT_FILE_BAD_DATA_ERROR;
 					}
 
@@ -603,6 +614,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 				}
 
 				default:
+					errorInfo = QString("Bad bits per pixel.");
 					return Converter::INPUT_FILE_BAD_DATA_ERROR;
 			}
 
@@ -729,6 +741,7 @@ bool Converter::Process::handleShowFrame()
 {
 	if (currentFrame == nullptr)
 	{
+		errorInfo = QString("Show frame failed");
 		result = INPUT_FILE_BAD_DATA_ERROR;
 		return false;
 	}
@@ -746,6 +759,7 @@ bool Converter::Process::handleFrameLabel(TAG *tag)
 {
 	if (currentFrame == nullptr)
 	{
+		errorInfo = QString("Frame label failed");
 		result = INPUT_FILE_BAD_DATA_ERROR;
 		return false;
 	}
@@ -775,6 +789,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 {
 	if (currentFrame == nullptr)
 	{
+		errorInfo = QString("Place object failed");
 		result = INPUT_FILE_BAD_DATA_ERROR;
 		return false;
 	}
@@ -898,6 +913,7 @@ bool Converter::Process::handleRemoveObject(TAG *tag)
 {
 	if (currentFrame == nullptr)
 	{
+		errorInfo = QString("Remove object failed");
 		result = INPUT_FILE_BAD_DATA_ERROR;
 		return false;
 	}
@@ -932,6 +948,7 @@ bool Converter::Process::handleImage(TAG *tag)
 		case BAD_SCALE_VALUE:
 		case INPUT_FILE_BAD_DATA_ERROR:
 		case OUTPUT_DIR_ERROR:
+			errorInfo = image.errorInfo;
 			return false;
 
 		case OUTPUT_FILE_WRITE_ERROR:
@@ -1115,7 +1132,18 @@ bool Converter::Process::handleShape(TAG *tag)
 
 	if (ok)
 	{
-		if (minX == shape.matrix.tx && minY == shape.matrix.ty)
+		int testX, testY;
+		if (shape.matrix.sx < 0)
+			testX = maxX;
+		else
+			testX = minX;
+
+		if (shape.matrix.sy < 0)
+			testY = maxY;
+		else
+			testY = minY;
+
+		if (testX == shape.matrix.tx && testY == shape.matrix.ty)
 		{
 			shape.width = maxX - minX;
 			shape.height = maxY - minY;
@@ -1174,6 +1202,7 @@ bool Converter::Process::parseSWF()
 			case ST_FILEATTRIBUTES:
 			case ST_SETBACKGROUNDCOLOR:
 			case ST_SCENEDESCRIPTION:
+			case ST_METADATA:
 			case ST_END:
 				// ignore
 				break;
