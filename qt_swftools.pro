@@ -9,7 +9,8 @@ SUBDIRS   += \
     swfgfx \
     swfgfxreader \
     swfdump \
-    swfextract
+    swfextract \
+    swf2sam
 
 swfrfx.depends = swfbase
 swfgfx.depends = swfrfx
@@ -17,3 +18,4 @@ swfgfxreader.depends = swfgfx
 
 swfdump.depends = swfgfxreader
 swfextract.depends = swfgfxreader
+swf2sam.depends = swfgfxreader
