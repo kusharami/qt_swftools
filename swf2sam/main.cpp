@@ -48,9 +48,14 @@ int main(int argc, char *argv[])
 		"} ",
 		"json");
 
+	QCommandLineOption skipUnsupportedOption(
+		QStringList("skip-unsupported"),
+		"Do not fail with error on unsupported SWF elements.");
+
 	parser.addOption(inputOption);
 	parser.addOption(outputOption);
 	parser.addOption(scaleOption);
+	parser.addOption(skipUnsupportedOption);
 	parser.addOption(configOption);
 
 	parser.process(a);
@@ -60,6 +65,7 @@ int main(int argc, char *argv[])
 	cvt.setInputFilePath(parser.value(inputOption));
 	cvt.setOutputDirPath(parser.value(outputOption));
 	cvt.setScale(parser.value(scaleOption).toDouble());
+	cvt.setSkipUnsupported(parser.isSet(skipUnsupportedOption));
 	cvt.loadConfig(parser.value(configOption));
 
 	int result = cvt.exec();

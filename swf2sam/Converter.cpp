@@ -63,6 +63,7 @@ struct SAM_Header
 
 Converter::Converter()
 	: mScale(1.0)
+	, mSkipUnsupported(false)
 	, mResult(OK)
 {
 
@@ -268,6 +269,34 @@ int Converter::exec()
 	return mResult;
 }
 
+static QString fillStyleToStr(int value)
+{
+	switch (value)
+	{
+		case 0x00:
+			return "SOLID";
+
+		case 0x10:
+		case 0x11:
+			return "LINEAR_GRADIENT";
+
+		case 0x12:
+		case 0x13:
+			return "RADIAL_GRADIENT";
+
+		case 0x40:
+		case 0x41:
+		case 0x42:
+		case 0x43:
+			return "BITMAP";
+
+		default:
+			break;
+	}
+
+	return QString("0x%1").arg(value, 2, 16, QChar('0'));
+}
+
 QString Converter::errorMessage() const
 {
 	switch (mResult)
@@ -286,12 +315,14 @@ QString Converter::errorMessage() const
 			return "Cannot export line styles to SAM.";
 
 		case UNSUPPORTED_FILLSTYLE:
-			return QString("Cannot export fill style 0x%1 to SAM.")
-				   .arg(mErrorInfo.toInt(), 2, 16, QChar('0'));
+		{
+			return QString("Cannot export fill style '%1' to SAM.")
+				   .arg(fillStyleToStr(mErrorInfo.toInt()));
+		}
 
 		case UNSUPPORTED_SHAPE:
-			return QString("Cannot export shape 0x%1 to SAM.")
-				   .arg(mErrorInfo.toInt(), 4, 16, QChar('0'));
+			return QString("Cannot export shape to SAM (%1).")
+				   .arg(mErrorInfo.toString());
 
 		case UNSUPPORTED_OBJECT_FLAGS:
 			return QString("Cannot export object with flags 0x%1 to SAM.")
@@ -614,7 +645,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 				}
 
 				default:
-					errorInfo = QString("Bad bits per pixel.");
+					errorInfo = QString("Bad bits per pixel");
 					return Converter::INPUT_FILE_BAD_DATA_ERROR;
 			}
 
@@ -797,12 +828,15 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 	SWFPLACEOBJECT srcObj;
 	swf_GetPlaceObject(tag, &srcObj);
 
-	if (srcObj.flags & ~(PF_CHAR | PF_CXFORM |
-						 PF_MATRIX | PF_MOVE | PF_NAME))
+	if (owner->mSkipUnsupported)
 	{
-		errorInfo = srcObj.flags;
-		result = UNSUPPORTED_OBJECT_FLAGS;
-		return false;
+		if (srcObj.flags & ~(PF_CHAR | PF_CXFORM |
+							 PF_MATRIX | PF_MOVE | PF_NAME))
+		{
+			errorInfo = srcObj.flags;
+			result = UNSUPPORTED_OBJECT_FLAGS;
+			return false;
+		}
 	}
 
 	if (srcObj.depth > DEPTH_MAX)
@@ -823,7 +857,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 	{
 		if (shouldMove)
 		{
-			if (placeObject1)
+			if (placeObject1 && owner->mSkipUnsupported)
 			{
 				errorInfo = srcObj.flags;
 				result = UNSUPPORTED_OBJECT_FLAGS;
@@ -869,14 +903,17 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 	if (placeObject1 || 0 != (srcObj.flags & PF_CXFORM))
 	{
-		if (srcObj.cxform.a1 != 0 ||
-			srcObj.cxform.r1 != 0 ||
-			srcObj.cxform.g1 != 0 ||
-			srcObj.cxform.b1 != 0)
+		if (not owner->mSkipUnsupported)
 		{
-			errorInfo = srcObj.id;
-			result = UNSUPPORTED_ADD_COLOR;
-			return false;
+			if (srcObj.cxform.a1 != 0 ||
+				srcObj.cxform.r1 != 0 ||
+				srcObj.cxform.g1 != 0 ||
+				srcObj.cxform.b1 != 0)
+			{
+				errorInfo = srcObj.id;
+				result = UNSUPPORTED_ADD_COLOR;
+				return false;
+			}
 		}
 		move.depthAndFlags |= MOVEFLAGS_COLOR;
 	}
@@ -971,7 +1008,7 @@ bool Converter::Process::handleShape(TAG *tag)
 	int shapeId = GET16(tag->data);
 	errorInfo = shapeId;
 
-	if (srcShape.numlinestyles > 0)
+	if (not owner->mSkipUnsupported && srcShape.numlinestyles > 0)
 	{
 		result = UNSUPPORTED_LINESTYLES;
 		return false;
@@ -1016,6 +1053,10 @@ bool Converter::Process::handleShape(TAG *tag)
 
 				if (nullptr != img)
 				{
+					if (owner->mSkipUnsupported)
+						break;
+
+					errorInfo = QString("Multi-bitmap shape is unsupported");
 					result = UNSUPPORTED_SHAPE;
 					return false;
 				}
@@ -1029,6 +1070,9 @@ bool Converter::Process::handleShape(TAG *tag)
 			}
 
 			default:
+				if (owner->mSkipUnsupported)
+					break;
+
 				errorInfo = fillStyle.type;
 				result = UNSUPPORTED_FILLSTYLE;
 				return false;
@@ -1037,6 +1081,10 @@ bool Converter::Process::handleShape(TAG *tag)
 
 	if (nullptr == img)
 	{
+		if (owner->mSkipUnsupported)
+			return true;
+
+		errorInfo = QString("No bitmap shape is unsupported");
 		result = UNSUPPORTED_SHAPE;
 		return false;
 	}
@@ -1050,54 +1098,50 @@ bool Converter::Process::handleShape(TAG *tag)
 	int curX = 0, curY = 0;
 	int lineCount = 0;
 	bool ok = true;
+
+	bool moveZero = line ? line->type == lineTo : false;
+	int testLineCount = moveZero ? 3 : 4;
+
 	while (line && ok)
 	{
 		switch (line->type)
 		{
 			case lineTo:
-				if (line != srcShape.lines)
+				if (line->next == nullptr || lineCount == testLineCount)
 				{
-					if (line->next == nullptr)
+					if (lineCount == testLineCount)
 					{
-						if (lineCount == 4 &&
-							line->y == srcShape.lines->y &&
+						if (moveZero)
+						{
+							break;
+						} else
+						if (line->y == srcShape.lines->y &&
 							line->x == srcShape.lines->x)
 						{
 							// total lines valid 4
 							// endpoint valid
 							break;
 						}
-					} else
-					{
-						if (line->y == curY && line->x != curX)
-						{
-							curX = line->x;
-							if (curX < minX)
-								minX = curX;
-
-							if (curX > maxX)
-								maxX = curX;
-
-							// horizontal line valid
-							break;
-						}
-
-						if (line->y != curY && line->x == curX)
-						{
-							curY = line->y;
-							if (curY < minY)
-								minY = curY;
-
-							if (curY > maxY)
-								maxY = curY;
-
-							// vertical line valid
-							break;
-						}
 					}
+
+					ok = false;
+				} else
+				{
+					curX = line->x;
+					if (curX < minX)
+						minX = curX;
+
+					if (curX > maxX)
+						maxX = curX;
+
+					curY = line->y;
+					if (curY < minY)
+						minY = curY;
+
+					if (curY > maxY)
+						maxY = curY;
 				}
 
-				ok = false;
 				break;
 
 			case moveTo:
@@ -1112,6 +1156,10 @@ bool Converter::Process::handleShape(TAG *tag)
 					maxY = curY;
 					break;
 				}
+
+				if (owner->mSkipUnsupported)
+					break;
+
 				// fall through
 			}
 
@@ -1122,35 +1170,30 @@ bool Converter::Process::handleShape(TAG *tag)
 
 		if (ok)
 		{
+			if (lineCount == testLineCount && owner->mSkipUnsupported)
+				break;
+
 			lineCount++;
 			line = line->next;
 		} else
 		{
-			result = UNSUPPORTED_SHAPE;
+			if (owner->mSkipUnsupported)
+			{
+				ok = true;
+				break;
+			} else
+			{
+				errorInfo = QString("Vector graphics is unsupported");
+				result = UNSUPPORTED_SHAPE;
+			}
 		}
 	}
 
 	if (ok)
 	{
-		int testX, testY;
-		if (shape.matrix.sx < 0)
-			testX = maxX;
-		else
-			testX = minX;
-
-		if (shape.matrix.sy < 0)
-			testY = maxY;
-		else
-			testY = minY;
-
-		if (testX == shape.matrix.tx && testY == shape.matrix.ty)
-		{
-			shape.width = maxX - minX;
-			shape.height = maxY - minY;
-			return true;
-		}
-
-		result = UNSUPPORTED_SHAPE;
+		shape.width = maxX - minX;
+		shape.height = maxY - minY;
+		return true;
 	}
 
 	return false;
@@ -1203,6 +1246,8 @@ bool Converter::Process::parseSWF()
 			case ST_SETBACKGROUNDCOLOR:
 			case ST_SCENEDESCRIPTION:
 			case ST_METADATA:
+			case ST_DOABC:
+			case ST_SYMBOLCLASS:
 			case ST_END:
 				// ignore
 				break;
@@ -1346,8 +1391,8 @@ bool Converter::Process::writeSAMShapes(QDataStream &stream)
 		int scaledX = scale(shape.matrix.tx, CEIL);
 		int scaledY = scale(shape.matrix.ty, CEIL);
 
-		if (scaledWidth <= 0 || scaledWidth > 65535 ||
-			scaledHeight <= 0 || scaledHeight > 65535 ||
+		if (scaledWidth < 0 || scaledWidth > 65535 ||
+			scaledHeight < 0 || scaledHeight > 65535 ||
 			scaledX < -32768 || scaledX > 32767 ||
 			scaledY < -32768 || scaledY > 32767)
 		{
