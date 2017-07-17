@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QCommandLineParser>
+#include <QDebug>
 
 #include "Converter.h"
 
@@ -62,6 +63,9 @@ int main(int argc, char *argv[])
 	cvt.loadConfig(parser.value(configOption));
 
 	int result = cvt.exec();
+
+	if (result != Converter::OK)
+		qCritical().noquote() << cvt.errorMessage();
 
 	return result;
 }

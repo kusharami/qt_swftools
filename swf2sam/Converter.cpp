@@ -279,50 +279,72 @@ QString Converter::errorMessage() const
 		case INPUT_FILE_BAD_DATA_ERROR:
 			return "Broken SWF file";
 
-		case UNSUPPORTED_SWF_LINESTYLES:
-			return "SWF LineStyles cannot be exported.";
+		case UNSUPPORTED_LINESTYLES:
+			return "Cannot export line styles to SAM.";
 
-		case UNSUPPORTED_SWF_FILLSTYLE:
-			return QString("SWF FillStyle(0x%2x) cannot be exported.")
-				   .arg(mErrorInfo.toInt());
+		case UNSUPPORTED_FILLSTYLE:
+			return QString("Cannot export fill style 0x%1 to SAM.")
+				   .arg(mErrorInfo.toInt(), 2, 16, QChar('0'));
 
-		case UNSUPPORTED_SWF_SHAPE:
-			return QString("SWF Shape(%d) cannot be exported.")
-				   .arg(mErrorInfo.toInt());
+		case UNSUPPORTED_SHAPE:
+			return QString("Cannot export shape 0x%1 to SAM.")
+				   .arg(mErrorInfo.toInt(), 4, 16, QChar('0'));
 
-		case UNSUPPORTED_SWF_OBJECT_FLAGS:
-			return QString("SWF object with flags(0x%4x) cannot be exported.")
-				   .arg(mErrorInfo.toInt());
+		case UNSUPPORTED_OBJECT_FLAGS:
+			return QString("Cannot export object with flags 0x%1 to SAM.")
+				   .arg(mErrorInfo.toInt(), 4, 16, QChar('0'));
 
-		case UNSUPPORTED_SWF_OBJECT_DEPTH:
-			return QString("SWF object with depth(0x%4x) cannot be exported.")
-				   .arg(mErrorInfo.toInt());
+		case UNSUPPORTED_OBJECT_DEPTH:
+			return QString("Cannot export object with depth 0x%1 to SAM.")
+				   .arg(mErrorInfo.toInt(), 4, 16, QChar('0'));
 
-		case UNSUPPORTED_SWF_SHAPE_COUNT:
+		case UNSUPPORTED_SHAPE_COUNT:
 			return QString(
-				"SWF has more than 255 shapes and cannot be exported to SAM.")
+				"Cannot export more than 255 shapes to SAM.")
 				   .arg(mErrorInfo.toInt());
 
-		case UNSUPPORTED_SWF_DISPLAY_COUNT:
+		case UNSUPPORTED_DISPLAY_COUNT:
+			return "Cannot export more than 255 places and/or removes to SAM.";
+
+		case UNSUPPORTED_ADD_COLOR:
 			return QString(
-				"SWF has more than 255 places/removes and "
-				"cannot be exported to SAM.")
-				   .arg(mErrorInfo.toInt());
+				"Cannot export additional color for object 0x%1 to SAM.")
+				   .arg(mErrorInfo.toInt(), 4, 16, QChar('0'));
 
-		case UNSUPPORTED_SWF_ADD_COLOR:
-			return QString(
-				"SWF object(0x%4x)) additional color cannot be exported to SAM.")
-				   .arg(mErrorInfo.toInt());
+		case UNSUPPORTED_TAG:
+		{
+			TAG tag;
+			tag.id = quint16(mErrorInfo.toInt());
+			QString tagName(swf_TagGetName(&tag));
+			if (tagName.isEmpty())
+				tagName = QString::number(tag.id);
+			return QString("Cannot export tag '%1' to SAM.")
+				   .arg(tagName);
+		}
 
-		case UNSUPPORTED_SWF_TAG:
-		case UNKNOWN_SWF_IMAGE_ID:
-		case UNKNOWN_SWF_SHAPE_ID:
+		case UNKNOWN_IMAGE_ID:
+			return QString("Unknown image id 0x%1.")
+				   .arg(mErrorInfo.toInt(), 4, 16, QChar('0'));
+
+		case UNKNOWN_SHAPE_ID:
+			return QString("Unknown shape id 0x%1.")
+				   .arg(mErrorInfo.toInt(), 4, 16, QChar('0'));
+
 		case OUTPUT_DIR_ERROR:
+			return "Unable to make output directory.";
+
 		case OUTPUT_FILE_WRITE_ERROR:
+			return QString("Unable to write file '%1'.")
+				   .arg(QFileInfo(mErrorInfo.toString()).fileName());
+
 		case CONFIG_OPEN_ERROR:
+			return "Unable to open configuration file.";
+
 		case CONFIG_PARSE_ERROR:
+			return "Unable to parse configuration file.";
+
 		case BAD_SCALE_VALUE:
-			break;
+			return "Bad scale value.";
 	}
 
 	return QString();
@@ -764,14 +786,14 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 						 PF_MATRIX | PF_MOVE | PF_NAME))
 	{
 		errorInfo = srcObj.flags;
-		result = UNSUPPORTED_SWF_OBJECT_FLAGS;
+		result = UNSUPPORTED_OBJECT_FLAGS;
 		return false;
 	}
 
 	if (srcObj.depth > DEPTH_MAX)
 	{
 		errorInfo = srcObj.depth;
-		result = UNSUPPORTED_SWF_OBJECT_DEPTH;
+		result = UNSUPPORTED_OBJECT_DEPTH;
 		return false;
 	}
 
@@ -789,7 +811,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 			if (placeObject1)
 			{
 				errorInfo = srcObj.flags;
-				result = UNSUPPORTED_SWF_OBJECT_FLAGS;
+				result = UNSUPPORTED_OBJECT_FLAGS;
 				return false;
 			}
 
@@ -797,7 +819,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 			if (removes.size() == 255)
 			{
-				result = UNSUPPORTED_SWF_DISPLAY_COUNT;
+				result = UNSUPPORTED_DISPLAY_COUNT;
 				return false;
 			}
 
@@ -808,7 +830,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 		if (shapeIt == shapeMap.end() || shapeIt->second > 255)
 		{
 			errorInfo = srcObj.id;
-			result = UNKNOWN_SWF_SHAPE_ID;
+			result = UNKNOWN_SHAPE_ID;
 			return false;
 		}
 
@@ -820,7 +842,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 		if (adds.size() == 255)
 		{
 
-			result = UNSUPPORTED_SWF_DISPLAY_COUNT;
+			result = UNSUPPORTED_DISPLAY_COUNT;
 			return false;
 		}
 
@@ -838,7 +860,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 			srcObj.cxform.b1 != 0)
 		{
 			errorInfo = srcObj.id;
-			result = UNSUPPORTED_SWF_ADD_COLOR;
+			result = UNSUPPORTED_ADD_COLOR;
 			return false;
 		}
 		move.depthAndFlags |= MOVEFLAGS_COLOR;
@@ -862,7 +884,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 		auto &moves = currentFrame->moves;
 		if (moves.size() == 255)
 		{
-			result = UNSUPPORTED_SWF_DISPLAY_COUNT;
+			result = UNSUPPORTED_DISPLAY_COUNT;
 			return false;
 		}
 
@@ -884,7 +906,7 @@ bool Converter::Process::handleRemoveObject(TAG *tag)
 
 	if (removes.size() == 255)
 	{
-		result = UNSUPPORTED_SWF_DISPLAY_COUNT;
+		result = UNSUPPORTED_DISPLAY_COUNT;
 		return false;
 	}
 
@@ -934,7 +956,7 @@ bool Converter::Process::handleShape(TAG *tag)
 
 	if (srcShape.numlinestyles > 0)
 	{
-		result = UNSUPPORTED_SWF_LINESTYLES;
+		result = UNSUPPORTED_LINESTYLES;
 		return false;
 	}
 
@@ -944,7 +966,7 @@ bool Converter::Process::handleShape(TAG *tag)
 
 	if (index == 255)
 	{
-		result = UNSUPPORTED_SWF_SHAPE_COUNT;
+		result = UNSUPPORTED_SHAPE_COUNT;
 		return false;
 	}
 
@@ -971,13 +993,13 @@ bool Converter::Process::handleShape(TAG *tag)
 				if (it == imageMap.end())
 				{
 					errorInfo = imageId;
-					result = UNKNOWN_SWF_IMAGE_ID;
+					result = UNKNOWN_IMAGE_ID;
 					return false;
 				}
 
 				if (nullptr != img)
 				{
-					result = UNSUPPORTED_SWF_SHAPE;
+					result = UNSUPPORTED_SHAPE;
 					return false;
 				}
 
@@ -991,14 +1013,14 @@ bool Converter::Process::handleShape(TAG *tag)
 
 			default:
 				errorInfo = fillStyle.type;
-				result = UNSUPPORTED_SWF_FILLSTYLE;
+				result = UNSUPPORTED_FILLSTYLE;
 				return false;
 		}
 	}
 
 	if (nullptr == img)
 	{
-		result = UNSUPPORTED_SWF_SHAPE;
+		result = UNSUPPORTED_SHAPE;
 		return false;
 	}
 
@@ -1087,7 +1109,7 @@ bool Converter::Process::handleShape(TAG *tag)
 			line = line->next;
 		} else
 		{
-			result = UNSUPPORTED_SWF_SHAPE;
+			result = UNSUPPORTED_SHAPE;
 		}
 	}
 
@@ -1100,7 +1122,7 @@ bool Converter::Process::handleShape(TAG *tag)
 			return true;
 		}
 
-		result = UNSUPPORTED_SWF_SHAPE;
+		result = UNSUPPORTED_SHAPE;
 	}
 
 	return false;
@@ -1197,7 +1219,7 @@ bool Converter::Process::parseSWF()
 			default:
 				ok = false;
 				errorInfo = tag->id;
-				result = UNSUPPORTED_SWF_TAG;
+				result = UNSUPPORTED_TAG;
 				break;
 		}
 
