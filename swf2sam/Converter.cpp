@@ -1209,12 +1209,6 @@ bool Converter::Process::readSWF()
 		return false;
 	}
 
-	if (not QDir().mkpath(owner->mOutputDirPath))
-	{
-		result = OUTPUT_DIR_ERROR;
-		return false;
-	}
-
 	reader_t reader;
 	QIODeviceSWFReader::init(&reader, &inputFile);
 
@@ -1305,9 +1299,16 @@ bool Converter::Process::parseSWF()
 
 bool Converter::Process::exportSAM()
 {
-	QSaveFile samFile(prefix + ".sam");
+	QFileInfo fileInfo(prefix + ".sam");
 
-	errorInfo = samFile.fileName();
+	errorInfo = fileInfo.filePath();
+	if (not QDir().mkpath(fileInfo.path()))
+	{
+		result = OUTPUT_DIR_ERROR;
+		return false;
+	}
+
+	QSaveFile samFile(fileInfo.filePath());
 	if (not samFile.open(QFile::WriteOnly | QFile::Truncate))
 	{
 		result = OUTPUT_FILE_WRITE_ERROR;
@@ -1332,7 +1333,7 @@ bool Converter::Process::exportSAM()
 		return false;
 	}
 
-	qInfo().noquote() << QFileInfo(samFile.fileName()).fileName();
+	qInfo().noquote() << fileInfo.fileName();
 	qInfo().noquote() << QString("Labels:");
 	for (auto &it : renames)
 	{
