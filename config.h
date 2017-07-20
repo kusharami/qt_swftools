@@ -47,13 +47,13 @@
 /* #undef HAVE_MALLINFO */
 
 /* Define if you have the unistd.h header file */
-#define HAVE_UNISTD_H 1
+// #define HAVE_UNISTD_H 1
 
 /* Define if you have the open64 function.  */
 /* #undef HAVE_OPEN64 */
 
 /* Define if you have the lrand48 function.  */
-#define HAVE_LRAND48 1
+// #define HAVE_LRAND48 1
 
 /* Define if you have the popen function.  */
 #define HAVE_POPEN 1
@@ -83,7 +83,7 @@
 #define HAVE_MMAP 1
 
 /* Define if you have the <dirent.h> header file.  */
-#define HAVE_DIRENT_H 1
+// #define HAVE_DIRENT_H 1
 
 /* Define if you have the <assert.h> header file.  */
 #define HAVE_ASSERT_H 1
@@ -113,13 +113,13 @@
 /* #undef HAVE_SYS_BSDTYPES_H */
 
 /* Define if you have the <sys/stat.h> header file.  */
-// #define HAVE_SYS_STAT_H 1
+#define HAVE_SYS_STAT_H 1
 
 /* Define if you have the <sys/mman.h> header file.  */
 // #define HAVE_SYS_MMAN_H 1
 
 /* Define if you have the <sys/types.h> header file.  */
-// #define HAVE_SYS_TYPES_H 1
+#define HAVE_SYS_TYPES_H 1
 
 /* Define if you have the <t1lib.h> header file.  */
 /* #undef HAVE_T1LIB_H */
@@ -188,7 +188,7 @@
 #define VERSION "2013-04-09-1007"
 
 /* Typedefs */
-#define boolean int
+//#define boolean int
 
 /* use gzip/uncompress */
 #define USE_GZIP 1
@@ -225,7 +225,7 @@
 #define LOWERCASE_UPPERCASE 1
 
 /* Define to 0 on non-windows systems */
-#define O_BINARY 0
+// #define O_BINARY 0
 
 #ifdef HAVE_ZLIB_H
 #ifdef HAVE_LIBZ

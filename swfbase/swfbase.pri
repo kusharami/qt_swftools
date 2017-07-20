@@ -27,6 +27,9 @@ unix|win32-g++ {
         -Wno-int-to-void-pointer-cast
 } else {
     win32 {
-        INCLUDEPATH += $$[QT_INSTALL_HEADERS]/QtZlib
+        DEFINES += inline=__inline
+        DEFINES += YY_NO_UNISTD_H
+        DEFINES -= UNICODE _UNICODE
+        DEFINES += _MBCS
     }
 }

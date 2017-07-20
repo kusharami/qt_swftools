@@ -8,6 +8,8 @@
 
 #include "QIODeviceSWFReader.h"
 
+#include "rfxswf.h"
+
 #include <QFile>
 #include <QSaveFile>
 #include <QDataStream>
@@ -24,7 +26,7 @@
 
 #include <zlib.h>
 
-#include "rfxswf.h"
+#include <memory>
 
 #define SAM_VERSION 1
 #define TWIPS_PER_PIXEL (20)
