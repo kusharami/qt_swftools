@@ -4,8 +4,11 @@
 
 CONFIG += warn_off
 
-contains(QMAKE_HOST.arch, x86_64) {
+CONFIG(debug, debug|release) {
     DEFINES += DEBUG
+}
+
+contains(QMAKE_HOST.arch, x86_64) {
     DEFINES += SIZEOF_VOIDP=8
 } else {
     DEFINES += SIZEOF_VOIDP=4
