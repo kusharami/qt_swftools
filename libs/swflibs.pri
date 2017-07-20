@@ -20,15 +20,23 @@ unix|win32-g++ {
     DEFINES += HAVE_UNISTD_H=1
     DEFINES += HAVE_TIME_H=1
     DEFINES += HAVE_SYS_TIME_H=1
-    DEFINES += HAVE_SYS_STAT_H=1
     DEFINES += HAVE_SYS_MMAN_H=1
-    DEFINES += HAVE_SYS_TYPES_H=1
+    DEFINES += HAVE_LRAND48=1
+    DEFINES += HAVE_DIRENT_H=1
+    DEFINES += O_BINARY=0
+    DEFINES += boolean=int
 } else {
     win32 {
         DEFINES += HAVE_IO_H=1
+        DEFINES += strncasecmp=strnicmp
+        win32-msvc2013 {
+            DEFINES += snprintf=_snprintf
+        }
 
         QMAKE_CXXFLAGS_WARN_OFF -= -W0
         QMAKE_CXXFLAGS += -W3
+
+        INCLUDEPATH += $$[QT_INSTALL_HEADERS]/QtZlib
     }
 }
 

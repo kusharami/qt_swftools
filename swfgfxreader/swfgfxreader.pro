@@ -1,7 +1,11 @@
 # SWF graphics reader library project to be built with qmake
 # Uses source code from www.github.com/matthiaskramm/swftools
 
-QT       -= core gui
+QT       -= gui
+
+unix {
+    QT -= core
+}
 
 TARGET = swfgfxreader
 TEMPLATE = lib

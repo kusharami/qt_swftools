@@ -6,9 +6,9 @@
 
 #include "QIODeviceSWFReader.h"
 
-#include <QIODevice>
-
 #include "bitio.h"
+
+#include <QIODevice>
 
 #define READER_TYPE 100
 
@@ -30,7 +30,6 @@ static int read(reader_t *reader, void *data, int len)
 	auto device = getDevice(reader);
 
 	return int(device->read(reinterpret_cast<char *>(data), len));
-
 }
 
 static int seek(reader_t *reader, int pos)
