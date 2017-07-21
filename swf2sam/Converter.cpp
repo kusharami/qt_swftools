@@ -209,9 +209,9 @@ struct Frame
 	Moves moves;
 };
 
-static inline quint8 cxToByte(S16 cx)
+static inline quint8 cxToByte(S16 cx, double alpha)
 {
-	return quint8((cx / WORD_TO_FLOAT) * 255.0);
+	return quint8((cx / WORD_TO_FLOAT) * 255.0 * alpha);
 }
 
 struct Converter::Process
@@ -930,10 +930,11 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 		move.depthAndFlags |= depth;
 		move.matrix = srcObj.matrix;
 
-		move.color.r = cxToByte(srcObj.cxform.r0);
-		move.color.g = cxToByte(srcObj.cxform.g0);
-		move.color.b = cxToByte(srcObj.cxform.b0);
-		move.color.a = cxToByte(srcObj.cxform.a0);
+		double a = srcObj.cxform.a0 / WORD_TO_FLOAT;
+		move.color.a = cxToByte(srcObj.cxform.a0, 1.0);
+		move.color.r = cxToByte(srcObj.cxform.r0, a);
+		move.color.g = cxToByte(srcObj.cxform.g0, a);
+		move.color.b = cxToByte(srcObj.cxform.b0, a);
 
 		auto &moves = currentFrame->moves;
 		if (moves.size() == 255)
