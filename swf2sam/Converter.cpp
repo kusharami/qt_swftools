@@ -68,7 +68,6 @@ Converter::Converter()
 	, mSkipUnsupported(false)
 	, mResult(OK)
 {
-
 }
 
 void Converter::loadConfig(const QString &configFilePath)
@@ -126,11 +125,13 @@ void Converter::loadConfigJson(const QByteArray &json)
 			renameMap[value.toString()] = it.key();
 			continue;
 		}
+
 		if (value.isArray())
 		{
 			auto arr = value.toArray();
 
 			bool ok = true;
+
 			for (auto ait = arr.constBegin(); ait != arr.constEnd(); ++ait)
 			{
 				auto av = *ait;
@@ -147,6 +148,7 @@ void Converter::loadConfigJson(const QByteArray &json)
 			if (ok)
 				continue;
 		}
+
 		mResult = CONFIG_PARSE_ERROR;
 		return;
 	}
@@ -196,6 +198,11 @@ struct Frame
 		quint16 depthAndFlags;
 		MATRIX matrix;
 		RGBA color;
+
+		inline quint16 depth() const
+		{
+			return depthAndFlags & DEPTH_MASK;
+		}
 	};
 
 	using Removes = std::vector<quint16>;
@@ -352,8 +359,10 @@ QString Converter::errorMessage() const
 			TAG tag;
 			tag.id = quint16(mErrorInfo.toInt());
 			QString tagName(swf_TagGetName(&tag));
+
 			if (tagName.isEmpty())
 				tagName = QString::number(tag.id);
+
 			return QString("Cannot export tag '%1' to SAM.")
 				   .arg(tagName);
 		}
@@ -429,6 +438,7 @@ static int findjpegboundary(U8 *data, int len)
 {
 	int t;
 	int pos = -1;
+
 	for (t = 0; t < len - 4; t++)
 	{
 		if (data[t] == 0xff &&
@@ -439,6 +449,7 @@ static int findjpegboundary(U8 *data, int len)
 			pos = t;
 		}
 	}
+
 	return pos;
 }
 
@@ -447,6 +458,7 @@ static QByteArray tagInflate(TAG *t, int len)
 	QByteArray result(len, Qt::Uninitialized);
 
 	auto destlen = uLongf(len);
+
 	if (Z_OK != uncompress(
 			reinterpret_cast<Bytef *>(result.data()), &destlen,
 			&t->data[t->pos], t->len - t->pos))
@@ -485,6 +497,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 			jpegBuffer.open(QBuffer::WriteOnly);
 
 			int skip = 2;
+
 			switch (tag->id)
 			{
 				case ST_DEFINEBITSJPEG:
@@ -493,6 +506,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 					{
 						writeLen = jpegTables->len - 2;
 						skip += 2;
+
 						if (jpegBuffer.write(
 								reinterpret_cast<char *>(jpegTables->data),
 								writeLen) != writeLen)
@@ -500,6 +514,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 							return Converter::OUTPUT_FILE_WRITE_ERROR;
 						}
 					}
+
 					break;
 				}
 
@@ -520,11 +535,13 @@ int Image::exportImage(const QString &prefix, qreal scale)
 
 						skip += pos + 4;
 					}
+
 					break;
 				}
 			}
 
 			writeLen = tagEnd - skip;
+
 			if (writeLen > 0 && jpegBuffer.write(
 					reinterpret_cast<char *>(&tag->data[skip]),
 					writeLen) != writeLen)
@@ -566,6 +583,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 				end += 6;
 
 				int compressedAlphaSize = tagEnd - end;
+
 				if (compressedAlphaSize > 0 && not image.hasAlphaChannel())
 				{
 					int width = image.width();
@@ -574,6 +592,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 					int alphaSize = width * height;
 					auto uncompressedSize = uLongf(alphaSize);
 					std::unique_ptr<Bytef[]> data(new Bytef[uncompressedSize]);
+
 					if (Z_OK != uncompress(
 							data.get(), &uncompressedSize,
 							&tag->data[end],
@@ -621,6 +640,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 			int height = swf_GetU16(tag);
 
 			int colorTableSize = 0;
+
 			switch (bpp)
 			{
 				case 8:
@@ -681,19 +701,23 @@ int Image::exportImage(const QString &prefix, qreal scale)
 			{
 				case 8:
 				case 16:
+
 					for (int y = 0; y < height; y++)
 					{
 						memcpy(image.scanLine(y), src, widthBytes);
 						src += bytesPerLine;
 					}
+
 					break;
 
 				case 32:
 				{
 					int srcPadding = bytesPerLine - widthBytes;
+
 					for (int y = 0; y < height; y++)
 					{
 						auto destLine = image.scanLine(y);
+
 						for (int x = 0; x < width; x++)
 						{
 							quint8 a = *src++;
@@ -708,6 +732,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 
 						src += srcPadding;
 					}
+
 					break;
 				}
 
@@ -780,6 +805,7 @@ bool Converter::Process::handleShowFrame()
 	}
 
 	currentFrame++;
+
 	if (currentFrame > &frames.back())
 	{
 		currentFrame = nullptr;
@@ -805,6 +831,7 @@ bool Converter::Process::handleFrameLabel(TAG *tag)
 
 	auto &renameMap = owner->mLabelRenameMap;
 	auto it = renameMap.find(labelName);
+
 	if (it != renameMap.end())
 	{
 		currentFrame->labelName = it->second;
@@ -878,6 +905,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 		}
 
 		auto shapeIt = shapeMap.find(srcObj.id);
+
 		if (shapeIt == shapeMap.end() || shapeIt->second > 255)
 		{
 			errorInfo = srcObj.id;
@@ -890,9 +918,9 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 		add.shapeId = quint8(shapeIt->second);
 
 		auto &adds = currentFrame->adds;
+
 		if (adds.size() == 255)
 		{
-
 			result = UNSUPPORTED_DISPLAY_COUNT;
 			return false;
 		}
@@ -917,6 +945,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 				return false;
 			}
 		}
+
 		move.depthAndFlags |= MOVEFLAGS_COLOR;
 	}
 
@@ -937,6 +966,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 		move.color.b = cxToByte(srcObj.cxform.b0, a);
 
 		auto &moves = currentFrame->moves;
+
 		if (moves.size() == 255)
 		{
 			result = UNSUPPORTED_DISPLAY_COUNT;
@@ -1043,10 +1073,12 @@ bool Converter::Process::handleShape(TAG *tag)
 			case 0x43:
 			{
 				int imageId = fillStyle.id_bitmap;
+
 				if (imageId == 65535)
 					continue;
 
 				auto it = imageMap.find(imageId);
+
 				if (it == imageMap.end())
 				{
 					errorInfo = imageId;
@@ -1073,12 +1105,14 @@ bool Converter::Process::handleShape(TAG *tag)
 			}
 
 			default:
+			{
 				if (owner->mSkipUnsupported)
 					break;
 
 				errorInfo = fillStyle.type;
 				result = UNSUPPORTED_FILLSTYLE;
 				return false;
+			}
 		}
 	}
 
@@ -1110,6 +1144,7 @@ bool Converter::Process::handleShape(TAG *tag)
 		switch (line->type)
 		{
 			case lineTo:
+
 				if (line->next == nullptr || lineCount == testLineCount)
 				{
 					if (lineCount == testLineCount)
@@ -1131,6 +1166,7 @@ bool Converter::Process::handleShape(TAG *tag)
 				} else
 				{
 					curX = line->x;
+
 					if (curX < minX)
 						minX = curX;
 
@@ -1138,6 +1174,7 @@ bool Converter::Process::handleShape(TAG *tag)
 						maxX = curX;
 
 					curY = line->y;
+
 					if (curY < minY)
 						minY = curY;
 
@@ -1235,6 +1272,7 @@ bool Converter::Process::parseSWF()
 
 	auto tag = swf.firstTag;
 	bool ok = true;
+
 	while (tag && ok)
 	{
 		switch (tag->id)
@@ -1305,6 +1343,7 @@ bool Converter::Process::exportSAM()
 	QFileInfo fileInfo(prefix + ".sam");
 
 	errorInfo = fileInfo.filePath();
+
 	if (not QDir().mkpath(fileInfo.path()))
 	{
 		result = OUTPUT_DIR_ERROR;
@@ -1312,6 +1351,7 @@ bool Converter::Process::exportSAM()
 	}
 
 	QSaveFile samFile(fileInfo.filePath());
+
 	if (not samFile.open(QFile::WriteOnly | QFile::Truncate))
 	{
 		result = OUTPUT_FILE_WRITE_ERROR;
@@ -1338,6 +1378,7 @@ bool Converter::Process::exportSAM()
 
 	qInfo().noquote() << fileInfo.fileName();
 	qInfo().noquote() << QString("Labels:");
+
 	for (auto &it : renames)
 	{
 		if (it.first != it.second)
@@ -1348,6 +1389,7 @@ bool Converter::Process::exportSAM()
 			qInfo().noquote() << it.first;
 		}
 	}
+
 	return true;
 }
 
@@ -1430,11 +1472,38 @@ bool Converter::Process::writeSAMFrames(QDataStream &stream)
 	if (not outputStreamOk(stream))
 		return false;
 
+	std::map<int, MATRIX> matrixMap;
+
 	for (const Frame &frame : frames)
 	{
 		auto &removes = frame.removes;
 		auto &adds = frame.adds;
-		auto &moves = frame.moves;
+		auto moves = frame.moves;
+
+		for (auto remove : removes)
+		{
+			matrixMap.erase(remove);
+		}
+
+		for (auto &move : moves)
+		{
+			int depth = move.depth();
+			auto it = matrixMap.find(depth);
+
+			if (it == matrixMap.end())
+			{
+				matrixMap[depth] = move.matrix;
+			} else
+			if (0 == (move.depthAndFlags & MOVEFLAGS_MATRIX))
+			{
+				move.matrix = it->second;
+				move.depthAndFlags |= MOVEFLAGS_MATRIX;
+			} else
+			{
+				it->second = move.matrix;
+			}
+		}
+
 		auto &labelName = frame.labelName;
 
 		quint8 flags = 0;
@@ -1472,6 +1541,7 @@ bool Converter::Process::writeSAMString(
 	auto utf8 = str.toUtf8();
 
 	int strLen = utf8.size();
+
 	if (strLen > 65535)
 	{
 		result = OUTPUT_FILE_WRITE_ERROR;
@@ -1493,6 +1563,7 @@ bool Converter::Process::writeSAMFrameRemoves(
 	Q_ASSERT(removes.size() <= 255);
 
 	stream << quint8(removes.size());
+
 	for (quint16 depth : removes)
 	{
 		stream << depth;
@@ -1529,6 +1600,7 @@ bool Converter::Process::writeSAMFrameMoves(
 	Q_ASSERT(moves.size() <= 255);
 
 	stream << quint8(moves.size());
+
 	if (not outputStreamOk(stream))
 		return false;
 
@@ -1539,6 +1611,7 @@ bool Converter::Process::writeSAMFrameMoves(
 			(DEPTH_MASK | MOVEFLAGS_MATRIX | MOVEFLAGS_COLOR);
 
 		int scaledX = 0, scaledY = 0;
+
 		if (depthAndFlags & MOVEFLAGS_MATRIX)
 		{
 			scaledX = scale(move.matrix.tx, CEIL);
@@ -1560,6 +1633,7 @@ bool Converter::Process::writeSAMFrameMoves(
 		}
 
 		stream << depthAndFlags;
+
 		if (depthAndFlags & MOVEFLAGS_MATRIX)
 		{
 			stream << qint32(move.matrix.sx);
