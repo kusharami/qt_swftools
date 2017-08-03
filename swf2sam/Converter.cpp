@@ -1091,7 +1091,9 @@ bool Converter::Process::handleShape(TAG *tag)
 					if (owner->mSkipUnsupported)
 						break;
 
-					errorInfo = QString("Multi-bitmap shape is unsupported");
+					errorInfo = QString(
+							"Multi-bitmap shape #%1 is unsupported")
+						.arg(shapeId);
 					result = UNSUPPORTED_SHAPE;
 					return false;
 				}
@@ -1121,7 +1123,8 @@ bool Converter::Process::handleShape(TAG *tag)
 		if (owner->mSkipUnsupported)
 			return true;
 
-		errorInfo = QString("No bitmap shape is unsupported");
+		errorInfo = QString("No bitmap shape #%1 is unsupported")
+			.arg(shapeId);
 		result = UNSUPPORTED_SHAPE;
 		return false;
 	}
@@ -1223,7 +1226,9 @@ bool Converter::Process::handleShape(TAG *tag)
 				break;
 			} else
 			{
-				errorInfo = QString("Vector graphics is unsupported");
+				errorInfo = QString(
+						"Vector graphics shape #%1 is unsupported")
+					.arg(shapeId);
 				result = UNSUPPORTED_SHAPE;
 			}
 		}
