@@ -349,11 +349,6 @@ QString Converter::errorMessage() const
 		case UNSUPPORTED_DISPLAY_COUNT:
 			return "Cannot export more than 255 places and/or removes to SAM.";
 
-		case UNSUPPORTED_ADD_COLOR:
-			return QString(
-				"Cannot export additional color for object 0x%1 to SAM.")
-				   .arg(mErrorInfo.toInt(), 4, 16, QChar('0'));
-
 		case UNSUPPORTED_TAG:
 		{
 			TAG tag;
@@ -933,19 +928,6 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 	if (placeObject1 || 0 != (srcObj.flags & PF_CXFORM))
 	{
-		if (not owner->mSkipUnsupported)
-		{
-			if (srcObj.cxform.a1 != 0 ||
-				srcObj.cxform.r1 != 0 ||
-				srcObj.cxform.g1 != 0 ||
-				srcObj.cxform.b1 != 0)
-			{
-				errorInfo = srcObj.id;
-				result = UNSUPPORTED_ADD_COLOR;
-				return false;
-			}
-		}
-
 		move.depthAndFlags |= MOVEFLAGS_COLOR;
 	}
 
