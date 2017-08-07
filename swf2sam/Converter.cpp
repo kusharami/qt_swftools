@@ -218,6 +218,12 @@ struct Frame
 
 static inline quint8 cxToByte(S16 cx, double alpha)
 {
+	if (cx > 256)
+		cx = 256;
+	else
+	if (cx < 0)
+		cx = 0;
+
 	return quint8((cx / WORD_TO_FLOAT) * 255.0 * alpha);
 }
 
@@ -941,7 +947,15 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 		move.depthAndFlags |= depth;
 		move.matrix = srcObj.matrix;
 
-		double a = srcObj.cxform.a0 / WORD_TO_FLOAT;
+		int a0 = srcObj.cxform.a0;
+
+		if (a0 > 256)
+			a0 = 256;
+		else
+		if (a0 < 0)
+			a0 = 0;
+
+		double a = a0 / WORD_TO_FLOAT;
 		move.color.a = cxToByte(srcObj.cxform.a0, 1.0);
 		move.color.r = cxToByte(srcObj.cxform.r0, a);
 		move.color.g = cxToByte(srcObj.cxform.g0, a);
