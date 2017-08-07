@@ -22,7 +22,10 @@ public:
 		INPUT_FILE_BAD_DATA_ERROR,
 		UNSUPPORTED_LINESTYLES,
 		UNSUPPORTED_FILLSTYLE,
-		UNSUPPORTED_SHAPE,
+		UNSUPPORTED_VECTOR_SHAPE,
+		UNSUPPORTED_MULTICOLOR_SHAPE,
+		UNSUPPORTED_MULTIBITMAP_SHAPE,
+		UNSUPPORTED_NOBITMAP_SHAPE,
 		UNSUPPORTED_OBJECT_FLAGS,
 		UNSUPPORTED_OBJECT_DEPTH,
 		UNSUPPORTED_SHAPE_COUNT,
@@ -34,7 +37,8 @@ public:
 		OUTPUT_FILE_WRITE_ERROR,
 		CONFIG_OPEN_ERROR,
 		CONFIG_PARSE_ERROR,
-		BAD_SCALE_VALUE
+		BAD_SCALE_VALUE,
+		BAD_SAM_VERSION
 	};
 
 	Converter();
@@ -43,6 +47,7 @@ public:
 
 	void setSkipUnsupported(bool skip);
 	void setScale(qreal value);
+	void setSamVersion(int value);
 	void setLabelRenameMap(const LabelRenameMap &value);
 	void setInputFilePath(const QString &path);
 	void setOutputDirPath(const QString &path);
@@ -54,7 +59,19 @@ public:
 
 	QString errorMessage() const;
 
+	struct Warning
+	{
+		int code;
+		QVariant info;
+	};
+
+	using Warnings = std::vector<Warning>;
+
+	inline const Warnings &warnings() const;
+
 private:
+	static QString warnMessage(const Warning &warn);
+
 	struct Process;
 	friend struct Process;
 
@@ -68,13 +85,15 @@ private:
 
 	int scale(int value, int mode) const;
 
+	Warnings mWarnings;
 	QVariant mErrorInfo;
 	QString mInputFilePath;
 	QString mOutputDirPath;
 	LabelRenameMap mLabelRenameMap;
 	qreal mScale;
-	bool mSkipUnsupported;
+	int mSamVersion;
 	int mResult;
+	bool mSkipUnsupported;
 };
 
 inline void Converter::setSkipUnsupported(bool skip)
@@ -85,6 +104,11 @@ inline void Converter::setSkipUnsupported(bool skip)
 inline void Converter::setScale(qreal value)
 {
 	mScale = value;
+}
+
+inline void Converter::setSamVersion(int value)
+{
+	mSamVersion = value;
 }
 
 inline void Converter::setLabelRenameMap(const LabelRenameMap &value)
@@ -100,4 +124,9 @@ inline void Converter::setInputFilePath(const QString &path)
 inline void Converter::setOutputDirPath(const QString &path)
 {
 	mOutputDirPath = path;
+}
+
+const Converter::Warnings &Converter::warnings() const
+{
+	return mWarnings;
 }
