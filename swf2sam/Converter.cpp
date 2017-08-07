@@ -1031,7 +1031,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 			if (removes.size() == maxDisplayCount())
 			{
-				errorInfo = removes.size();
+				errorInfo = quint32(removes.size());
 				result = UNSUPPORTED_DISPLAY_COUNT;
 				return false;
 			}
@@ -1056,7 +1056,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 		if (adds.size() == maxDisplayCount())
 		{
-			errorInfo = adds.size();
+			errorInfo = quint32(adds.size());
 			result = UNSUPPORTED_DISPLAY_COUNT;
 			return false;
 		}
@@ -1115,7 +1115,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 		if (moves.size() == maxDisplayCount())
 		{
-			errorInfo = moves.size();
+			errorInfo = quint32(moves.size());
 			result = UNSUPPORTED_DISPLAY_COUNT;
 			return false;
 		}
@@ -1139,7 +1139,7 @@ bool Converter::Process::handleRemoveObject(TAG *tag)
 
 	if (removes.size() == maxDisplayCount())
 	{
-		errorInfo = removes.size();
+		errorInfo = quint32(removes.size());
 		result = UNSUPPORTED_DISPLAY_COUNT;
 		return false;
 	}
@@ -1190,7 +1190,7 @@ bool Converter::Process::handleShape(TAG *tag)
 	auto index = shapes.size();
 
 	Warning warn;
-	warn.info = QVariantList() << shapeId << index;
+	warn.info = QVariantList() << shapeId << quint32(index);
 
 	if (srcShape.numlinestyles > 0)
 	{
@@ -1208,7 +1208,7 @@ bool Converter::Process::handleShape(TAG *tag)
 
 	if (index == maxShape())
 	{
-		errorInfo = index;
+		errorInfo = quint32(index);
 		result = UNSUPPORTED_SHAPE_COUNT;
 		return false;
 	}
@@ -1283,7 +1283,7 @@ bool Converter::Process::handleShape(TAG *tag)
 					break;
 				}
 
-				shape.imageIndex = it->second;
+				shape.imageIndex = int(it->second);
 				img = &images.at(shape.imageIndex);
 				Q_ASSERT(nullptr != img);
 
@@ -1295,7 +1295,7 @@ bool Converter::Process::handleShape(TAG *tag)
 			{
 				warn.info = QVariantList()	<< fillStyle.type
 											<< shapeId
-											<< index;
+											<< quint32(index);
 				warn.code = UNSUPPORTED_FILLSTYLE;
 
 				if (not owner->mSkipUnsupported)
