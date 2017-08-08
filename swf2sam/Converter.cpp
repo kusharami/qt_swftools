@@ -1020,6 +1020,9 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 	bool placeObject1 = (tag->id == ST_PLACEOBJECT);
 
+	Frame::ObjectMove move;
+	move.flags = 0;
+
 	bool shouldMove = (placeObject1 ||
 					   0 != (srcObj.flags & PF_MOVE));
 
@@ -1037,6 +1040,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 			}
 
 			removes.push_back(depth);
+			move.flags |= PF_CHAR;
 		}
 
 		auto shapeIt = shapeMap.find(srcObj.id);
@@ -1063,9 +1067,6 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 		adds.push_back(add);
 	}
-
-	Frame::ObjectMove move;
-	move.flags = 0;
 
 	if (placeObject1 || 0 != (srcObj.flags & PF_CXFORM))
 	{
@@ -1794,7 +1795,20 @@ bool Converter::Process::writeSAMFrames(QDataStream &stream)
 
 		for (auto remove : removes)
 		{
-			moveMap.erase(remove);
+			bool found = false;
+
+			for (auto &move : moves)
+			{
+				if (move.depth == remove &&
+					0 != (move.flags & PF_CHAR))
+				{
+					found = true;
+					break;
+				}
+			}
+
+			if (not found)
+				moveMap.erase(remove);
 		}
 
 		auto &labelName = frame.labelName;
@@ -1998,10 +2012,19 @@ bool Converter::Process::writeSAMFrameMoveV1(
 		depthAndFlags |= MOVEFLAGS_LONGCOORDS;
 	}
 
-	if (move.flags & PF_CXFORM)
 	{
-		if (0 != memcmp(&move.multColor, &prev.multColor, sizeof(RGBA)))
-			depthAndFlags |= MOVEFLAGS_COLOR;
+		RGBA tempMultColor = { 255, 255, 255, 255 };
+
+		if (0 == (move.flags & PF_CHAR))
+		{
+			tempMultColor = prev.multColor;
+		}
+
+		if (move.flags & (PF_CXFORM | PF_CHAR))
+		{
+			if (0 != memcmp(&move.multColor, &tempMultColor, sizeof(RGBA)))
+				depthAndFlags |= MOVEFLAGS_COLOR;
+		}
 	}
 
 	stream << depthAndFlags;
@@ -2045,39 +2068,50 @@ bool Converter::Process::writeSAMFrameMoveV2(
 
 	int scaledX = 0, scaledY = 0;
 
-	if (move.flags & PF_MATRIX)
-	{
-		if (move.matrix.sx != prev.matrix.sx ||
-			move.matrix.sy != prev.matrix.sy ||
-			move.matrix.r0 != prev.matrix.r0 ||
-			move.matrix.r1 != prev.matrix.r1)
-		{
-			depthAndFlags |= MOVEFLAGSV2_TRANSFORM;
-		}
-
-		if (move.matrix.tx != prev.matrix.tx ||
-			move.matrix.ty != prev.matrix.ty)
-		{
-			scaledX = scale(move.matrix.tx, CEIL);
-			scaledY = scale(move.matrix.ty, CEIL);
-			depthAndFlags |= MOVEFLAGSV2_COORDS;
-		}
-	} else
+	if (0 == (move.flags & PF_MATRIX))
 	{
 		move.matrix = prev.matrix;
 	}
 
-	if (move.flags & PF_CXFORM)
-	{
-		if (0 != memcmp(&move.multColor, &prev.multColor, sizeof(RGBA)))
-			depthAndFlags |= MOVEFLAGSV2_MULTCOLOR;
-
-		if (0 != memcmp(&move.addColor, &prev.addColor, sizeof(RGBA)))
-			depthAndFlags |= MOVEFLAGSV2_ADDCOLOR;
-	} else
+	if (0 == (move.flags & PF_CXFORM))
 	{
 		move.multColor = prev.multColor;
 		move.addColor = prev.addColor;
+	}
+
+	{
+		Frame::ObjectMove temp;
+
+		if (0 == (move.flags & PF_CHAR))
+			temp = prev;
+
+		if (move.flags & (PF_MATRIX | PF_CHAR))
+		{
+			if (move.matrix.sx != temp.matrix.sx ||
+				move.matrix.sy != temp.matrix.sy ||
+				move.matrix.r0 != temp.matrix.r0 ||
+				move.matrix.r1 != temp.matrix.r1)
+			{
+				depthAndFlags |= MOVEFLAGSV2_TRANSFORM;
+			}
+
+			if (move.matrix.tx != temp.matrix.tx ||
+				move.matrix.ty != temp.matrix.ty)
+			{
+				scaledX = scale(move.matrix.tx, CEIL);
+				scaledY = scale(move.matrix.ty, CEIL);
+				depthAndFlags |= MOVEFLAGSV2_COORDS;
+			}
+		}
+
+		if (move.flags & (PF_CXFORM | PF_CHAR))
+		{
+			if (0 != memcmp(&move.multColor, &temp.multColor, sizeof(RGBA)))
+				depthAndFlags |= MOVEFLAGSV2_MULTCOLOR;
+
+			if (0 != memcmp(&move.addColor, &temp.addColor, sizeof(RGBA)))
+				depthAndFlags |= MOVEFLAGSV2_ADDCOLOR;
+		}
 	}
 
 	stream << depthAndFlags;
