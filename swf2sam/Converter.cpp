@@ -896,7 +896,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 				return false;
 			}
 
-			removes.push_back(depth);
+			removes.push_back(depth | 0x8000);
 		}
 
 		auto shapeIt = shapeMap.find(srcObj.id);
@@ -910,6 +910,10 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 		Frame::ObjectAdd add;
 		add.depth = depth;
+
+		if (shouldMove)
+			add.depth |= 0x8000;
+
 		add.shapeId = quint8(shapeIt->second);
 
 		auto &adds = currentFrame->adds;
@@ -1459,7 +1463,7 @@ bool Converter::Process::writeSAMFrames(QDataStream &stream)
 	if (not outputStreamOk(stream))
 		return false;
 
-	std::map<int, MATRIX> matrixMap;
+	std::map<int, Frame::ObjectMove> matrixMap;
 
 	for (const Frame &frame : frames)
 	{
@@ -1469,7 +1473,34 @@ bool Converter::Process::writeSAMFrames(QDataStream &stream)
 
 		for (auto remove : removes)
 		{
-			matrixMap.erase(remove);
+			if (0 == (remove & 0x8000))
+				matrixMap.erase(remove);
+		}
+
+		for (auto &add : adds)
+		{
+			int depth = add.depth & DEPTH_MASK;
+
+			auto it = matrixMap.find(depth);
+
+			if (it != matrixMap.end())
+			{
+				bool found = false;
+
+				for (auto &move : moves)
+				{
+					if (depth == move.depth())
+					{
+						found = true;
+						break;
+					}
+				}
+
+				if (not found)
+				{
+					moves.push_back(it->second);
+				}
+			}
 		}
 
 		for (auto &move : moves)
@@ -1477,18 +1508,22 @@ bool Converter::Process::writeSAMFrames(QDataStream &stream)
 			int depth = move.depth();
 			auto it = matrixMap.find(depth);
 
-			if (it == matrixMap.end())
+			if (it != matrixMap.end())
 			{
-				matrixMap[depth] = move.matrix;
-			} else
-			if (0 == (move.depthAndFlags & MOVEFLAGS_MATRIX))
-			{
-				move.matrix = it->second;
-				move.depthAndFlags |= MOVEFLAGS_MATRIX;
-			} else
-			{
-				it->second = move.matrix;
+				if (0 == (move.depthAndFlags & MOVEFLAGS_MATRIX))
+				{
+					move.matrix = it->second.matrix;
+					move.depthAndFlags |= MOVEFLAGS_MATRIX;
+				}
+
+				if (0 == (move.depthAndFlags & MOVEFLAGS_COLOR))
+				{
+					move.color = it->second.color;
+					move.depthAndFlags |= MOVEFLAGS_COLOR;
+				}
 			}
+
+			matrixMap[depth] = move;
 		}
 
 		auto &labelName = frame.labelName;
@@ -1553,7 +1588,7 @@ bool Converter::Process::writeSAMFrameRemoves(
 
 	for (quint16 depth : removes)
 	{
-		stream << depth;
+		stream << quint16(depth & DEPTH_MASK);
 	}
 
 	return outputStreamOk(stream);
@@ -1571,7 +1606,7 @@ bool Converter::Process::writeSAMFrameAdds(
 
 	for (const Frame::ObjectAdd &add : adds)
 	{
-		stream << add.depth;
+		stream << quint16(add.depth & DEPTH_MASK);
 		stream << add.shapeId;
 	}
 
