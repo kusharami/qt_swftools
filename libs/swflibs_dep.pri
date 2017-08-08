@@ -5,7 +5,7 @@
 include(swflibs.pri)
 
 isEmpty(SWFLIBS_PATH) {
-    SWFLIBS_PATH = $$_PRO_FILE_PWD_/../build/libs
+    SWFLIBS_PATH = $$QTSWFTOOLSROOT/build/libs
 }
 
 CONFIG(debug, debug|release) {

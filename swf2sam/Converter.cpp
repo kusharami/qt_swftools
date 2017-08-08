@@ -1627,7 +1627,20 @@ bool Converter::Process::writeSAMHeader(QDataStream &stream)
 	stream << header.width;
 	stream << header.height;
 
-	return outputStreamOk(stream);
+	if (not outputStreamOk(stream))
+		return false;
+
+	switch (header.version)
+	{
+		case SAM_VERSION_1:
+			return true;
+
+		case SAM_VERSION_2:
+			return writeSAMString(
+				stream, QFileInfo(prefix).fileName());
+	}
+
+	return false;
 }
 
 bool Converter::Process::writeSAMShapes(QDataStream &stream)
