@@ -56,6 +56,11 @@ public:
 	void loadConfigJson(const QByteArray &json);
 
 	int exec();
+	inline int result() const;
+	inline const QVariant &errorInfo() const;
+	static QString tagName(const QVariant &t);
+	static QString tagName(quint16 t);
+	static QString fillStyleToStr(int value);
 
 	QString errorMessage() const;
 
@@ -124,6 +129,16 @@ inline void Converter::setInputFilePath(const QString &path)
 inline void Converter::setOutputDirPath(const QString &path)
 {
 	mOutputDirPath = path;
+}
+
+int Converter::result() const
+{
+	return mResult;
+}
+
+const QVariant &Converter::errorInfo() const
+{
+	return mErrorInfo;
 }
 
 const Converter::Warnings &Converter::warnings() const

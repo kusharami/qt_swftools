@@ -40,7 +40,7 @@ enum
 	FIXEDTW = 65536 * 20
 };
 
-static constexpr const qreal TWIPS_PER_PIXELF = TWIPS_PER_PIXEL;
+static Q_CONSTEXPR qreal TWIPS_PER_PIXELF = TWIPS_PER_PIXEL;
 #define LONG_TO_FLOAT (65536.0)
 #define WORD_TO_FLOAT (256.0)
 
@@ -208,6 +208,8 @@ struct Image
 
 	QString fileName;
 
+	QString filePathForPrefix(const QString &prefix) const;
+
 	Image(TAG *tag, TAG *jpegTables, size_t index);
 
 	int id() const;
@@ -363,7 +365,24 @@ int Converter::exec()
 	return mResult;
 }
 
-static QString fillStyleToStr(int value)
+QString Converter::tagName(const QVariant &t)
+{
+	return tagName(quint16(t.toUInt()));
+}
+
+QString Converter::tagName(quint16 t)
+{
+	TAG tag;
+	tag.id = t;
+	QString tagName(swf_TagGetName(&tag));
+
+	if (tagName.isEmpty())
+		tagName = QString::number(tag.id);
+
+	return tagName;
+}
+
+QString Converter::fillStyleToStr(int value)
 {
 	switch (value)
 	{
@@ -414,7 +433,7 @@ QString Converter::warnMessage(const Warning &warn)
 			return QString(
 				"Cannot export fill style '%1' "
 				"for shape #%2 to SAM.")
-				   .arg(fillStyleToStr(list.at(0).toUInt()))
+				   .arg(fillStyleToStr(list.at(0).toInt()))
 				   .arg(list.at(1).toUInt());
 		}
 
@@ -462,24 +481,17 @@ QString Converter::warnMessage(const Warning &warn)
 
 		case UNSUPPORTED_TAG:
 		{
-			TAG tag;
-			tag.id = quint16(warn.info.toInt());
-			QString tagName(swf_TagGetName(&tag));
-
-			if (tagName.isEmpty())
-				tagName = QString::number(tag.id);
-
 			return QString("Cannot export tag '%1' to SAM.")
-				   .arg(tagName);
+				   .arg(tagName(warn.info));
 		}
 
 		case UNKNOWN_IMAGE_ID:
 			return QString("Unknown image id %1.")
-				   .arg(warn.info.toInt(), 4, 10, QChar('0'));
+				   .arg(warn.info.toUInt(), 4, 10, QChar('0'));
 
 		case UNKNOWN_SHAPE_ID:
 			return QString("Unknown shape id %1.")
-				   .arg(warn.info.toInt(), 4, 10, QChar('0'));
+				   .arg(warn.info.toUInt(), 4, 10, QChar('0'));
 
 		case OUTPUT_DIR_ERROR:
 			return "Unable to make output directory.";
@@ -552,6 +564,13 @@ int Converter::scale(int value, int mode) const
 	return int(v);
 }
 
+QString Image::filePathForPrefix(const QString &prefix) const
+{
+	static const QString nameFmt("%1%2.png");
+
+	return nameFmt.arg(prefix).arg(index, 4, 10, QChar('0'));
+}
+
 Image::Image(TAG *tag, TAG *jpegTables, size_t index)
 	: tag(tag)
 	, jpegTables(jpegTables)
@@ -603,9 +622,7 @@ static QByteArray tagInflate(TAG *t, int len)
 
 int Image::exportImage(const QString &prefix, qreal scale)
 {
-	static const QString nameFmt("%1_%2.png");
-
-	auto imageFilePath = nameFmt.arg(prefix).arg(index + 1, 4, 10, QChar('0'));
+	auto imageFilePath = filePathForPrefix(prefix);
 
 	fileName = QFileInfo(imageFilePath).fileName();
 
@@ -902,6 +919,8 @@ int Image::exportImage(const QString &prefix, qreal scale)
 		return Converter::OUTPUT_DIR_ERROR;
 	}
 
+	errorInfo = imageFilePath;
+
 	QSaveFile file(imageFilePath);
 
 	if (not file.open(QFile::WriteOnly | QFile::Truncate))
@@ -1152,11 +1171,28 @@ bool Converter::Process::handleRemoveObject(TAG *tag)
 
 bool Converter::Process::handleImage(TAG *tag)
 {
+	auto prefix = this->prefix;
+
+	switch (owner->mSamVersion)
+	{
+		case SAM_VERSION_1:
+			prefix += '_';
+			break;
+
+		case SAM_VERSION_2:
+			prefix += '/';
+			break;
+
+		default:
+			return false;
+	}
+
 	auto index = images.size();
 	images.push_back(Image(tag, jpegTables, index));
 	imageMap[GET16(tag->data)] = index;
 
 	Image &image = images.back();
+
 	result = image.exportImage(prefix, owner->mScale);
 
 	switch (result)
@@ -1167,11 +1203,8 @@ bool Converter::Process::handleImage(TAG *tag)
 		case BAD_SCALE_VALUE:
 		case INPUT_FILE_BAD_DATA_ERROR:
 		case OUTPUT_DIR_ERROR:
-			errorInfo = image.errorInfo;
-			return false;
-
 		case OUTPUT_FILE_WRITE_ERROR:
-			errorInfo = QDir(owner->mOutputDirPath).filePath(image.fileName);
+			errorInfo = image.errorInfo;
 			return false;
 
 		default:
@@ -1203,6 +1236,8 @@ bool Converter::Process::handleShape(TAG *tag)
 			result = warn.code;
 			return false;
 		}
+
+		owner->mWarnings.push_back(warn);
 	}
 
 	Image *img = nullptr;
@@ -1312,7 +1347,7 @@ bool Converter::Process::handleShape(TAG *tag)
 		}
 	}
 
-	if (nullptr == img)
+	if (nullptr == img && owner->mSamVersion == SAM_VERSION_1)
 	{
 		warn.code = UNSUPPORTED_NOBITMAP_SHAPE;
 
