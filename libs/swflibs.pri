@@ -47,7 +47,7 @@ isEmpty(QTSWFTOOLSROOT) {
     QTSWFTOOLSROOT = $$_PRO_FILE_PWD_/..
 }
 isEmpty(SWFTOOLSROOT) {
-    SWFTOOLSROOT = $$_PRO_FILE_PWD_/../thirdparty/swftools
+    SWFTOOLSROOT = $$QTSWFTOOLSROOT/thirdparty/swftools
 }
 
 INCLUDEPATH += $$QTSWFTOOLSROOT/libs

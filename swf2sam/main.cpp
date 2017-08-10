@@ -32,6 +32,11 @@ int main(int argc, char *argv[])
 		"Output directory path to store SAM-file and images.",
 		"path");
 
+	QCommandLineOption samVesionOption(
+		QStringList("sam-version"),
+		"Output SAM-file format version (Default is 2).",
+		"value", "2");
+
 	QCommandLineOption scaleOption(
 		{"s", "scale"}, "Output scale factor.", "value", "1");
 
@@ -54,6 +59,7 @@ int main(int argc, char *argv[])
 
 	parser.addOption(inputOption);
 	parser.addOption(outputOption);
+	parser.addOption(samVesionOption);
 	parser.addOption(scaleOption);
 	parser.addOption(skipUnsupportedOption);
 	parser.addOption(configOption);
@@ -64,14 +70,17 @@ int main(int argc, char *argv[])
 
 	cvt.setInputFilePath(parser.value(inputOption));
 	cvt.setOutputDirPath(parser.value(outputOption));
+	cvt.setSamVersion(parser.value(samVesionOption).toInt());
 	cvt.setScale(parser.value(scaleOption).toDouble());
 	cvt.setSkipUnsupported(parser.isSet(skipUnsupportedOption));
 	cvt.loadConfig(parser.value(configOption));
 
 	int result = cvt.exec();
 
-	if (result != Converter::OK)
-		qCritical().noquote() << cvt.errorMessage();
+	auto errorMessage = cvt.errorMessage();
+
+	if (not errorMessage.isEmpty())
+		qCritical().noquote() << errorMessage;
 
 	return result;
 }
