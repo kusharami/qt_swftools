@@ -2,7 +2,7 @@
 # Uses Qt Framework from www.qt.io
 # Uses libraries from www.github.com/matthiaskramm/swftools
 
-VERSION = 2.0.0
+VERSION = 2.0.1
 
 QMAKE_TARGET_PRODUCT = swf2sam
 QMAKE_TARGET_DESCRIPTION = SWF to SAM animation converter
