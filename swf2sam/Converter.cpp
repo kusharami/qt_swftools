@@ -27,6 +27,9 @@
 #include <zlib.h>
 
 #include <memory>
+#include <functional>
+#include <algorithm>
+#include <set>
 
 enum
 {
@@ -37,12 +40,13 @@ enum
 enum
 {
 	TWIPS_PER_PIXEL = 20,
-	FIXEDTW = 65536 * 20
+	FIXEDTW = 65536 * TWIPS_PER_PIXEL
 };
 
 static Q_CONSTEXPR qreal TWIPS_PER_PIXELF = TWIPS_PER_PIXEL;
-#define LONG_TO_FLOAT (65536.0)
-#define WORD_TO_FLOAT (256.0)
+static Q_CONSTEXPR qreal LONG_TO_FLOAT = 65536.0;
+static Q_CONSTEXPR qreal FIXEDTW_TO_FLOAT = FIXEDTW;
+static Q_CONSTEXPR qreal WORD_TO_FLOAT = 256.0;
 
 enum
 {
@@ -220,13 +224,21 @@ struct Image
 struct Shape
 {
 	int imageIndex;
-
-	int width;
-	int height;
+	QPolygon vertices;
 	MATRIX matrix;
 	RGBA color;
 
 	Shape();
+
+	bool isRect() const;
+};
+
+struct ShapeRef
+{
+	size_t startIndex;
+	size_t endIndex;
+
+	size_t shapeCount() const;
 };
 
 struct Frame
@@ -248,10 +260,18 @@ struct Frame
 		ObjectMove();
 	};
 
+	struct DepthRef
+	{
+		size_t startDepth;
+		size_t endDepth;
+	};
+
 	using Removes = std::vector<quint16>;
+	using RemoveSet = std::set<quint16>;
 	using Adds = std::vector<ObjectAdd>;
 	using Moves = std::vector<ObjectMove>;
 	using MoveMap = std::map<int, Frame::ObjectMove>;
+	using DepthMap = std::map<int, DepthRef>;
 
 	QString labelName;
 
@@ -296,9 +316,10 @@ struct Converter::Process
 	std::vector<Image> images;
 	std::vector<Shape> shapes;
 	std::vector<Frame> frames;
+	std::vector<ShapeRef> shapeRefs;
 
 	std::map<int, size_t> imageMap;
-	std::map<int, size_t> shapeMap;
+	std::map<int, size_t> shapeRefMap;
 
 	LabelRenameMap renames;
 
@@ -309,14 +330,59 @@ struct Converter::Process
 	Frame *currentFrame;
 	TAG *jpegTables;
 	int result;
+	quint16 firstDepth;
+	quint8 depthMultiplier;
+
+	class SAMWriter
+	{
+		Process &owner;
+		QDataStream stream;
+		Frame::RemoveSet removes;
+		Frame::Adds adds;
+		Frame::Moves moves;
+		Frame::MoveMap moveMap;
+		Frame::DepthMap depthMap;
+
+	public:
+		SAMWriter(Process &owner, QIODevice *device);
+
+		bool exec();
+
+	private:
+		bool writeHeader();
+		bool writeShapes();
+		bool writeShapesV1();
+		bool writeShapesV2();
+		bool writeFrames();
+		bool writeString(const QString &str);
+		bool writeDisplayCount(size_t len);
+
+		bool prepareObjectRemoves(const Frame &frame);
+		bool writeObjectRemoves();
+
+		bool prepareObjectAdds(const Frame &frame);
+		bool writeObjectAdds();
+
+		bool prepareObjectMoves(const Frame &frame);
+		bool writeObjectMoves();
+		bool writeObjectMoveV1(
+			Frame::ObjectMove &move, const Frame::ObjectMove &prev);
+		bool writeObjectMoveV2(
+			Frame::ObjectMove &move, const Frame::ObjectMove &prev);
+		bool writeFrameLabel(const Frame &frame);
+		bool writeFrameFlags(const Frame &frame);
+		bool writeFrameCount();
+
+		bool outputStreamOk();
+	};
 
 	Process(Converter *owner);
 	~Process();
 
 	inline int scale(int value, int mode) const;
-	inline size_t maxDisplayCount() const;
-	inline size_t maxDepth() const;
-	inline size_t maxShape() const;
+	size_t maxDisplayCount() const;
+	size_t maxDepth() const;
+	size_t maxShape() const;
 
 	bool handleShowFrame();
 	bool handleFrameLabel(TAG *tag);
@@ -327,34 +393,42 @@ struct Converter::Process
 	bool readSWF();
 	bool parseSWF();
 	bool exportSAM();
-
-	bool writeSAMHeader(QDataStream &stream);
-	bool writeSAMShapes(QDataStream &stream);
-	bool writeSAMShapesV1(QDataStream &stream);
-	bool writeSAMShapesV2(QDataStream &stream);
-	bool writeSAMFrames(QDataStream &stream);
-	bool writeSAMString(QDataStream &stream, const QString &str);
-	bool writeFrameArrayLength(QDataStream &stream, size_t len);
-
-	bool writeSAMFrameRemoves(
-		QDataStream &stream, const Frame::Removes &removes);
-	bool writeSAMFrameAdds(QDataStream &stream, const Frame::Adds &adds);
-	bool writeSAMFrameMoves(
-		QDataStream &stream,
-		Frame::Moves &moves,
-		Frame::MoveMap &moveMap);
-	bool writeSAMFrameMoveV1(
-		QDataStream &stream,
-		Frame::ObjectMove &move,
-		const Frame::ObjectMove &prev);
-	bool writeSAMFrameMoveV2(
-		QDataStream &stream,
-		Frame::ObjectMove &move,
-		const Frame::ObjectMove &prev);
-	bool writeSAMFrameLabel(QDataStream &stream, const QString &labelName);
-
-	bool outputStreamOk(QDataStream &stream);
 };
+
+Shape::Shape()
+	: imageIndex(-1)
+{
+	memset(&matrix, 0, sizeof(matrix));
+	memset(&color, 0, sizeof(color));
+	matrix.sx = FIXEDTW;
+	matrix.sy = FIXEDTW;
+}
+
+bool Shape::isRect() const
+{
+	if (vertices.isEmpty())
+		return false;
+
+	int vertexCount = 4 + ((vertices.first() == vertices.last()) ? 1 : 0);
+
+	if (vertexCount != vertices.count())
+		return false;
+
+	auto &p1 = vertices.at(0);
+	auto &p2 = vertices.at(1);
+	auto &p3 = vertices.at(2);
+	auto &p4 = vertices.at(3);
+
+	return (p1 - p2 == p4 - p3) && (p4 - p1 == p3 - p2);
+}
+
+size_t ShapeRef::shapeCount() const
+{
+	if (endIndex < startIndex)
+		return 0;
+
+	return (endIndex - startIndex) + 1;
+}
 
 int Converter::exec()
 {
@@ -441,18 +515,6 @@ QString Converter::warnMessage(const Warning &warn)
 			return QString(
 				"Cannot export shape to SAM "
 				"(Vector graphics shape #%1 is unsupported).")
-				   .arg(warn.info.toList().at(0).toUInt());
-
-		case UNSUPPORTED_MULTICOLOR_SHAPE:
-			return QString(
-				"Cannot export shape to SAM "
-				"(Multi-color shape #%1 is unsupported).")
-				   .arg(warn.info.toList().at(0).toUInt());
-
-		case UNSUPPORTED_MULTIBITMAP_SHAPE:
-			return QString(
-				"Cannot export shape to SAM "
-				"(Multi-bitmap shape #%1 is unsupported).")
 				   .arg(warn.info.toList().at(0).toUInt());
 
 		case UNSUPPORTED_NOBITMAP_SHAPE:
@@ -937,17 +999,6 @@ int Image::exportImage(const QString &prefix, qreal scale)
 	return Converter::OK;
 }
 
-Shape::Shape()
-	: imageIndex(-1)
-	, width(0)
-	, height(0)
-{
-	memset(&matrix, 0, sizeof(MATRIX));
-	memset(&color, 0, sizeof(RGBA));
-	matrix.sx = 65536 * TWIPS_PER_PIXEL;
-	matrix.sy = 65536 * TWIPS_PER_PIXEL;
-}
-
 bool Converter::Process::handleShowFrame()
 {
 	if (currentFrame == nullptr)
@@ -1030,41 +1081,24 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 	quint16 depth = srcObj.depth;
 
-	if (depth > maxDepth())
-	{
-		errorInfo = depth;
-		result = UNSUPPORTED_OBJECT_DEPTH;
-		return false;
-	}
-
 	bool placeObject1 = (tag->id == ST_PLACEOBJECT);
 
 	Frame::ObjectMove move;
 	move.flags = 0;
 
-	bool shouldMove = (placeObject1 ||
-					   0 != (srcObj.flags & PF_MOVE));
+	bool shouldMove = (placeObject1 || 0 != (srcObj.flags & PF_MOVE));
 
 	if (placeObject1 || 0 != (srcObj.flags & PF_CHAR))
 	{
 		if (shouldMove)
 		{
-			auto &removes = currentFrame->removes;
-
-			if (removes.size() == maxDisplayCount())
-			{
-				errorInfo = quint32(removes.size());
-				result = UNSUPPORTED_DISPLAY_COUNT;
-				return false;
-			}
-
-			removes.push_back(depth);
+			currentFrame->removes.push_back(depth);
 			move.flags |= PF_CHAR;
 		}
 
-		auto shapeIt = shapeMap.find(srcObj.id);
+		auto shapeRefIt = shapeRefMap.find(srcObj.id);
 
-		if (shapeIt == shapeMap.end() || shapeIt->second > maxShape())
+		if (shapeRefIt == shapeRefMap.end())
 		{
 			errorInfo = srcObj.id;
 			result = UNKNOWN_SHAPE_ID;
@@ -1073,18 +1107,12 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 
 		Frame::ObjectAdd add;
 		add.depth = depth;
-		add.shapeId = quint16(shapeIt->second);
+		add.shapeId = quint16(shapeRefIt->second);
 
-		auto &adds = currentFrame->adds;
+		if (depth < firstDepth)
+			firstDepth = depth;
 
-		if (adds.size() == maxDisplayCount())
-		{
-			errorInfo = quint32(adds.size());
-			result = UNSUPPORTED_DISPLAY_COUNT;
-			return false;
-		}
-
-		adds.push_back(add);
+		currentFrame->adds.push_back(add);
 	}
 
 	if (placeObject1 || 0 != (srcObj.flags & PF_CXFORM))
@@ -1111,10 +1139,13 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 				int a0 = srcObj.cxform.a0;
 
 				if (a0 > 256)
+				{
 					a0 = 256;
-				else
+				} else
 				if (a0 < 0)
+				{
 					a0 = 0;
+				}
 
 				a = a0 / WORD_TO_FLOAT;
 				break;
@@ -1131,16 +1162,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 		move.addColor.g = addColorToByte(srcObj.cxform.g1);
 		move.addColor.b = addColorToByte(srcObj.cxform.b1);
 
-		auto &moves = currentFrame->moves;
-
-		if (moves.size() == maxDisplayCount())
-		{
-			errorInfo = quint32(moves.size());
-			result = UNSUPPORTED_DISPLAY_COUNT;
-			return false;
-		}
-
-		moves.push_back(move);
+		currentFrame->moves.push_back(move);
 	}
 
 	return true;
@@ -1155,16 +1177,7 @@ bool Converter::Process::handleRemoveObject(TAG *tag)
 		return false;
 	}
 
-	auto &removes = currentFrame->removes;
-
-	if (removes.size() == maxDisplayCount())
-	{
-		errorInfo = quint32(removes.size());
-		result = UNSUPPORTED_DISPLAY_COUNT;
-		return false;
-	}
-
-	removes.push_back(quint16(swf_GetDepth(tag)));
+	currentFrame->removes.push_back(quint16(swf_GetDepth(tag)));
 
 	return true;
 }
@@ -1221,7 +1234,8 @@ bool Converter::Process::handleShape(TAG *tag)
 
 	swf_ParseDefineShape(tag, &srcShape);
 	int shapeId = GET16(tag->data);
-	auto index = shapes.size();
+	size_t index = shapeRefs.size();
+	size_t shapeIndex = shapes.size();
 
 	Warning warn;
 	warn.info = QVariantList() << shapeId << quint32(index);
@@ -1240,20 +1254,16 @@ bool Converter::Process::handleShape(TAG *tag)
 		owner->mWarnings.push_back(warn);
 	}
 
+	shapeRefs.emplace_back();
+	shapeRefMap[shapeId] = index;
+	ShapeRef &shapeRef = shapeRefs.back();
+
+	shapeRef.startIndex = shapeIndex;
+	shapeRef.endIndex = shapeIndex - 1;
+
 	Image *img = nullptr;
 
-	if (index == maxShape())
-	{
-		errorInfo = quint32(index);
-		result = UNSUPPORTED_SHAPE_COUNT;
-		return false;
-	}
-
-	shapes.push_back(Shape());
-	shapeMap[shapeId] = index;
-	Shape &shape = shapes.back();
-	int colorCount = 0;
-	bool multiFill = false;
+	std::map<int, size_t> fillStyleMap;
 
 	for (int i = 0; i < srcShape.numfillstyles; i++)
 	{
@@ -1261,30 +1271,7 @@ bool Converter::Process::handleShape(TAG *tag)
 
 		switch (fillStyle.type)
 		{
-			case 0x00:
-			{
-				shape.color = fillStyle.color;
-
-				if (0 < colorCount++)
-				{
-					warn.code = UNSUPPORTED_MULTICOLOR_SHAPE;
-
-					if (not owner->mSkipUnsupported)
-					{
-						errorInfo = warn.info;
-						result = warn.code;
-						return false;
-					}
-
-					multiFill = true;
-					owner->mWarnings.push_back(warn);
-					break;
-				}
-
-				break;
-			}
-
-			case 0x40:
+			case 0x40:	// BITMAP FILL
 			case 0x41:
 			case 0x42:
 			case 0x43:
@@ -1293,6 +1280,11 @@ bool Converter::Process::handleShape(TAG *tag)
 
 				if (imageId == 65535)
 					continue;
+
+				fillStyleMap[i + 1] = shapes.size();
+
+				shapes.emplace_back();
+				Shape &shape = shapes.back();
 
 				auto it = imageMap.find(imageId);
 
@@ -1303,29 +1295,31 @@ bool Converter::Process::handleShape(TAG *tag)
 					return false;
 				}
 
-				if (nullptr != img)
-				{
-					warn.code = UNSUPPORTED_MULTIBITMAP_SHAPE;
-
-					if (not owner->mSkipUnsupported)
-					{
-						errorInfo = warn.info;
-						result = warn.code;
-						return false;
-					}
-
-					multiFill = true;
-					owner->mWarnings.push_back(warn);
-					break;
-				}
-
 				shape.imageIndex = int(it->second);
 				img = &images.at(shape.imageIndex);
 				Q_ASSERT(nullptr != img);
 
 				shape.matrix = fillStyle.m;
+				shapeRef.endIndex++;
+
 				break;
 			}
+
+			case 0x00:	// SOLID FILL
+			{
+				if (owner->mSamVersion != SAM_VERSION_1)
+				{
+					fillStyleMap[i + 1] = shapes.size();
+
+					shapes.emplace_back();
+					Shape &shape = shapes.back();
+
+					shape.color = fillStyle.color;
+					shapeRef.endIndex++;
+
+					break;
+				}
+			}	// fall through
 
 			default:
 			{
@@ -1364,127 +1358,97 @@ bool Converter::Process::handleShape(TAG *tag)
 
 	auto line = srcShape.lines;
 
-	int minX = 0;
-	int minY = 0;
-	int maxX = 0;
-	int maxY = 0;
-	int curX = 0, curY = 0;
-	int lineCount = 0;
 	bool ok = true;
-
-	bool moveZero = line ? line->type == lineTo : false;
-	int testLineCount = moveZero ? 3 : 4;
 
 	while (line && ok)
 	{
-		switch (line->type)
+		if (line->fillstyle0 != 0 && not owner->mSkipUnsupported)
 		{
-			case lineTo:
-
-				if (line->next == nullptr || lineCount == testLineCount)
-				{
-					if (lineCount == testLineCount)
-					{
-						if (moveZero)
-						{
-							break;
-						} else
-						if (line->y == srcShape.lines->y &&
-							line->x == srcShape.lines->x)
-						{
-							// total lines valid 4
-							// endpoint valid
-							break;
-						}
-					}
-
-					ok = false;
-				} else
-				{
-					curX = line->x;
-
-					if (curX < minX)
-						minX = curX;
-
-					if (curX > maxX)
-						maxX = curX;
-
-					curY = line->y;
-
-					if (curY < minY)
-						minY = curY;
-
-					if (curY > maxY)
-						maxY = curY;
-				}
-
-				break;
-
-			case moveTo:
-			{
-				if (line == srcShape.lines)
-				{
-					curX = line->x;
-					curY = line->y;
-					minX = curX;
-					minY = curY;
-					maxX = curX;
-					maxY = curY;
-					break;
-				}
-
-				if (owner->mSkipUnsupported)
-					break;
-
-				// fall through
-			}
-
-			default:
-				ok = false;
-				break;
+			ok = false;
+			break;
 		}
 
-		if (ok &&
-			lineCount == testLineCount &&
-			owner->mSkipUnsupported &&
-			line->next != nullptr)
-		{
-			if (multiFill)
-				break;
+		auto it = fillStyleMap.find(line->fillstyle1);
 
-			ok = false;
+		if (it != fillStyleMap.end())
+		{
+			auto &poly = shapes.at(it->second).vertices;
+
+			if (poly.isEmpty() && line->type == lineTo)
+			{
+				poly.append(QPoint());
+			}
+
+			switch (line->type)
+			{
+				case moveTo:
+				{
+					if (not poly.isEmpty())
+					{
+						if (not owner->mSkipUnsupported)
+						{
+							ok = false;
+						}
+
+						break;
+					}
+
+					// fall through
+				}
+
+				case lineTo:
+				{
+					poly.append(QPoint(line->x, line->y));
+					break;
+				}
+
+				default:
+					ok = false;
+					break;
+			}
 		}
 
 		if (ok)
 		{
-			lineCount++;
 			line = line->next;
-		} else
+		}
+	}
+
+	for (; shapeIndex <= shapeRef.endIndex; shapeIndex++)
+	{
+		if (not shapes.at(shapeIndex).isRect())
 		{
-			warn.code = UNSUPPORTED_VECTOR_SHAPE;
-
-			if (owner->mSkipUnsupported)
-			{
-				owner->mWarnings.push_back(warn);
-				ok = true;
-			} else
-			{
-				errorInfo = warn.info;
-				result = warn.code;
-			}
-
+			ok = false;
 			break;
 		}
 	}
 
-	shape.width = maxX - minX;
-	shape.height = maxY - minY;
-
-	if (srcShape.bbox)
+	if (not ok)
 	{
-		shape.width = srcShape.bbox->xmax - srcShape.bbox->xmin;
-		shape.height = srcShape.bbox->ymax - srcShape.bbox->ymin;
+		warn.code = UNSUPPORTED_VECTOR_SHAPE;
+
+		if (owner->mSkipUnsupported)
+		{
+			owner->mWarnings.push_back(warn);
+			ok = true;
+		} else
+		{
+			errorInfo = warn.info;
+			result = warn.code;
+		}
 	}
+
+	auto shapeCount = shapeRef.shapeCount();
+
+	if (shapeCount > 255)
+	{
+		errorInfo = quint32(shapeCount);
+		result = UNSUPPORTED_SHAPE_COUNT;
+		return false;
+	}
+
+	if (shapeCount > depthMultiplier)
+		depthMultiplier = quint8(shapeCount);
 
 	return ok;
 }
@@ -1609,16 +1573,11 @@ bool Converter::Process::exportSAM()
 	}
 
 	{
-		QDataStream stream(&samFile);
-		stream.setByteOrder(QDataStream::LittleEndian);
+		SAMWriter writer(*this, &samFile);
 
-		if (not writeSAMHeader(stream) ||
-			not writeSAMShapes(stream) ||
-			not writeSAMFrames(stream))
-		{
+		if (not writer.exec())
 			return false;
-		}
-	}	// close data stream
+	}	// close writer
 
 	if (not samFile.commit())
 	{
@@ -1643,16 +1602,30 @@ bool Converter::Process::exportSAM()
 	return true;
 }
 
-bool Converter::Process::writeSAMHeader(QDataStream &stream)
+Converter::Process::SAMWriter::SAMWriter(
+	Process &owner, QIODevice *device)
+	: owner(owner)
+	, stream(device)
 {
+	stream.setByteOrder(QDataStream::LittleEndian);
+}
+
+bool Converter::Process::SAMWriter::exec()
+{
+	return writeHeader() && writeShapes() && writeFrames();
+}
+
+bool Converter::Process::SAMWriter::writeHeader()
+{
+	auto &swf = owner.swf;
 	SAM_Header header;
 	memcpy(header.signature, SAM_Signature, SAM_SIGN_SIZE);
-	header.version = owner->mSamVersion;
+	header.version = owner.owner->mSamVersion;
 	header.frame_rate = quint8(swf.frameRate >> 8);
-	header.x = scale(swf.movieSize.xmin, FLOOR);
-	header.y = scale(swf.movieSize.ymin, FLOOR);
-	header.width = scale(swf.movieSize.xmax, CEIL) - header.x;
-	header.height = scale(swf.movieSize.ymax, CEIL) - header.y;
+	header.x = owner.scale(swf.movieSize.xmin, FLOOR);
+	header.y = owner.scale(swf.movieSize.ymin, FLOOR);
+	header.width = owner.scale(swf.movieSize.xmax, CEIL) - header.x;
+	header.height = owner.scale(swf.movieSize.ymax, CEIL) - header.y;
 
 	stream.writeRawData(header.signature, SAM_SIGN_SIZE);
 	stream << header.version;
@@ -1662,7 +1635,7 @@ bool Converter::Process::writeSAMHeader(QDataStream &stream)
 	stream << header.width;
 	stream << header.height;
 
-	if (not outputStreamOk(stream))
+	if (not outputStreamOk())
 		return false;
 
 	switch (header.version)
@@ -1671,55 +1644,63 @@ bool Converter::Process::writeSAMHeader(QDataStream &stream)
 			return true;
 
 		case SAM_VERSION_2:
-			return writeSAMString(
-				stream, QFileInfo(prefix).fileName());
+			return writeString(QFileInfo(owner.prefix).fileName());
 	}
 
 	return false;
 }
 
-bool Converter::Process::writeSAMShapes(QDataStream &stream)
+bool Converter::Process::SAMWriter::writeShapes()
 {
+	auto &shapes = owner.shapes;
+
+	if (shapes.size() > owner.maxShape())
+	{
+		owner.errorInfo = quint32(shapes.size());
+		owner.result = UNSUPPORTED_SHAPE_COUNT;
+		return false;
+	}
+
 	Q_ASSERT(shapes.size() <= 65535);
 	auto shapeCount = quint16(shapes.size());
 
 	stream << shapeCount;
 
-	if (not outputStreamOk(stream))
+	if (not outputStreamOk())
 		return false;
 
-	switch (owner->mSamVersion)
+	switch (owner.owner->mSamVersion)
 	{
 		case SAM_VERSION_1:
-			return writeSAMShapesV1(stream);
+			return writeShapesV1();
 
 		case SAM_VERSION_2:
-			return writeSAMShapesV2(stream);
+			return writeShapesV2();
 	}
 
 	return false;
 }
 
-bool Converter::Process::writeSAMShapesV1(QDataStream &stream)
+bool Converter::Process::SAMWriter::writeShapesV1()
 {
-	for (const Shape &shape : shapes)
+	for (const Shape &shape : owner.shapes)
 	{
-		const Image &image = images.at(shape.imageIndex);
+		const Image &image = owner.images.at(shape.imageIndex);
 
 		int scaledWidth = image.width;
 		int scaledHeight = image.height;
 
-		int scaledX = scale(shape.matrix.tx, CEIL);
-		int scaledY = scale(shape.matrix.ty, CEIL);
+		int scaledX = owner.scale(shape.matrix.tx, CEIL);
+		int scaledY = owner.scale(shape.matrix.ty, CEIL);
 
 		if (scaledX < -32768 || scaledX > 32767 ||
 			scaledY < -32768 || scaledY > 32767)
 		{
-			result = BAD_SCALE_VALUE;
+			owner.result = BAD_SCALE_VALUE;
 			return false;
 		}
 
-		if (not writeSAMString(stream, image.fileName))
+		if (not writeString(image.fileName))
 			return false;
 
 		stream << quint16(scaledWidth);
@@ -1731,16 +1712,16 @@ bool Converter::Process::writeSAMShapesV1(QDataStream &stream)
 		stream << qint16(scaledX);
 		stream << qint16(scaledY);
 
-		if (not outputStreamOk(stream))
+		if (not outputStreamOk())
 			return false;
 	}
 
 	return true;
 }
 
-bool Converter::Process::writeSAMShapesV2(QDataStream &stream)
+bool Converter::Process::SAMWriter::writeShapesV2()
 {
-	for (const Shape &shape : shapes)
+	for (const Shape &shape : owner.shapes)
 	{
 		quint8 flags = 0;
 
@@ -1751,21 +1732,24 @@ bool Converter::Process::writeSAMShapesV2(QDataStream &stream)
 		{
 			Q_ASSERT(shape.imageIndex <= 0xFFFF);
 			flags |= SYMBOLFLAGS_BITMAP;
-			auto &image = images.at(shape.imageIndex);
+			auto &image = owner.images.at(shape.imageIndex);
 			scaledWidth = image.width;
 			scaledHeight = image.height;
 		} else
 		{
+			auto bb = shape.vertices.boundingRect();
+			qreal scale = owner.owner->mScale;
+
 			scaledWidth =
-				qCeil((shape.width / TWIPS_PER_PIXELF) * owner->mScale);
+				qCeil((bb.width() / TWIPS_PER_PIXELF) * scale);
 			scaledHeight =
-				qCeil((shape.height / TWIPS_PER_PIXELF) * owner->mScale);
+				qCeil((bb.height() / TWIPS_PER_PIXELF) * scale);
 		}
 
 		if (scaledWidth < 0 || scaledHeight < 0 ||
 			scaledWidth > 65535 || scaledHeight > 65535)
 		{
-			result = BAD_SCALE_VALUE;
+			owner.result = BAD_SCALE_VALUE;
 			return false;
 		}
 
@@ -1809,79 +1793,73 @@ bool Converter::Process::writeSAMShapesV2(QDataStream &stream)
 
 		if (flags & SYMBOLFLAGS_MATRIX)
 		{
-			int scaledX = scale(shape.matrix.tx, CEIL);
-			int scaledY = scale(shape.matrix.ty, CEIL);
-			stream << qint32(shape.matrix.sx / TWIPS_PER_PIXEL);
+			int scaledX = owner.scale(shape.matrix.tx, CEIL);
+			int scaledY = owner.scale(shape.matrix.ty, CEIL);
+			stream << qint32(qRound(shape.matrix.sx / TWIPS_PER_PIXELF));
 			stream << qint32(shape.matrix.r1);
 			stream << qint32(shape.matrix.r0);
-			stream << qint32(shape.matrix.sy / TWIPS_PER_PIXEL);
+			stream << qint32(qRound(shape.matrix.sy / TWIPS_PER_PIXELF));
 			stream << qint32(scaledX);
 			stream << qint32(scaledY);
 		}
 
-		if (not outputStreamOk(stream))
+		if (not outputStreamOk())
 			return false;
 	}
 
 	return true;
 }
 
-bool Converter::Process::writeSAMFrames(QDataStream &stream)
+bool Converter::Process::SAMWriter::prepareObjectRemoves(const Frame &frame)
 {
-	stream << quint16(swf.frameCount);
+	removes.clear();
 
-	if (not outputStreamOk(stream))
-		return false;
-
-	Frame::MoveMap moveMap;
-
-	for (const Frame &frame : frames)
+	for (quint16 removeDepth : frame.removes)
 	{
-		auto &removes = frame.removes;
-		auto &adds = frame.adds;
-		auto moves = frame.moves;
+		auto it = depthMap.find(removeDepth);
 
-		for (auto remove : removes)
+		if (it == depthMap.end())
 		{
-			bool found = false;
+			continue;
+		}
 
-			for (auto &move : moves)
+		auto &depthRef = it->second;
+
+		for (size_t depth = depthRef.startDepth;
+			 depth <= depthRef.endDepth; depth++)
+		{
+			if (depth > owner.maxDepth())
 			{
-				if (move.depth == remove &&
-					0 != (move.flags & PF_CHAR))
-				{
-					found = true;
-					break;
-				}
+				owner.errorInfo = quint32(depth);
+				owner.result = UNSUPPORTED_OBJECT_DEPTH;
+				return false;
 			}
 
-			if (not found)
-				moveMap.erase(remove);
+			removes.insert(quint16(depth));
 		}
+	}
 
-		auto &labelName = frame.labelName;
+	return true;
+}
 
-		quint8 flags = 0;
+bool Converter::Process::SAMWriter::writeFrames()
+{
+	depthMap.clear();
+	moveMap.clear();
 
-		if (not removes.empty())
-			flags |= FRAMEFLAGS_REMOVES;
+	if (not writeFrameCount())
+		return false;
 
-		if (not adds.empty())
-			flags |= FRAMEFLAGS_ADDS;
-
-		if (not moves.empty())
-			flags |= FRAMEFLAGS_MOVES;
-
-		if (not labelName.isEmpty())
-			flags |= FRAMEFLAGS_LABEL;
-
-		stream << flags;
-
-		if (not outputStreamOk(stream) ||
-			not writeSAMFrameRemoves(stream, removes) ||
-			not writeSAMFrameAdds(stream, adds) ||
-			not writeSAMFrameMoves(stream, moves, moveMap) ||
-			not writeSAMFrameLabel(stream, labelName))
+	for (const auto &frame : owner.frames)
+	{
+		if (not prepareObjectRemoves(frame) ||
+			not prepareObjectAdds(frame) ||
+			not prepareObjectMoves(frame) ||
+			not writeFrameFlags(frame) ||
+			not writeObjectRemoves() ||
+			not writeObjectAdds() ||
+			not writeObjectMoves() ||
+			not writeFrameLabel(frame))
 		{
 			return false;
 		}
@@ -1890,8 +1868,7 @@ bool Converter::Process::writeSAMFrames(QDataStream &stream)
 	return true;
 }
 
-bool Converter::Process::writeSAMString(
-	QDataStream &stream, const QString &str)
+bool Converter::Process::SAMWriter::writeString(const QString &str)
 {
 	auto utf8 = str.toUtf8();
 
@@ -1899,19 +1876,26 @@ bool Converter::Process::writeSAMString(
 
 	if (strLen > 65535)
 	{
-		result = OUTPUT_FILE_WRITE_ERROR;
+		owner.result = OUTPUT_FILE_WRITE_ERROR;
 		return false;
 	}
 
 	stream << quint16(strLen);
 	stream.writeRawData(utf8.data(), strLen);
 
-	return outputStreamOk(stream);
+	return outputStreamOk();
 }
 
-bool Converter::Process::writeFrameArrayLength(QDataStream &stream, size_t len)
+bool Converter::Process::SAMWriter::writeDisplayCount(size_t len)
 {
-	switch (owner->mSamVersion)
+	if (len > owner.maxDisplayCount())
+	{
+		owner.errorInfo = quint32(len);
+		owner.result = UNSUPPORTED_DISPLAY_COUNT;
+		return false;
+	}
+
+	switch (owner.owner->mSamVersion)
 	{
 		case SAM_VERSION_1:
 			Q_ASSERT(len <= 255);
@@ -1927,16 +1911,15 @@ bool Converter::Process::writeFrameArrayLength(QDataStream &stream, size_t len)
 			return false;
 	}
 
-	return outputStreamOk(stream);
+	return outputStreamOk();
 }
 
-bool Converter::Process::writeSAMFrameRemoves(
-	QDataStream &stream, const Frame::Removes &removes)
+bool Converter::Process::SAMWriter::writeObjectRemoves()
 {
 	if (removes.empty())
 		return true;
 
-	if (not writeFrameArrayLength(stream, removes.size()))
+	if (not writeDisplayCount(removes.size()))
 		return false;
 
 	for (quint16 depth : removes)
@@ -1944,29 +1927,66 @@ bool Converter::Process::writeSAMFrameRemoves(
 		stream << depth;
 	}
 
-	return outputStreamOk(stream);
+	return outputStreamOk();
 }
 
-bool Converter::Process::writeSAMFrameAdds(
-	QDataStream &stream, const Frame::Adds &adds)
+bool Converter::Process::SAMWriter::prepareObjectAdds(const Frame &frame)
+{
+	adds.clear();
+
+	for (auto &add : frame.adds)
+	{
+		const auto &shapeRef = owner.shapeRefs.at(add.shapeId);
+
+		auto &depthRef = depthMap[add.depth];
+		size_t depth =
+			size_t(add.depth - owner.firstDepth) * owner.depthMultiplier;
+		depthRef.startDepth = depth;
+		depthRef.endDepth = depth - 1;
+
+		for (size_t shapeIndex = shapeRef.startIndex;
+			 shapeIndex <= shapeRef.endIndex;
+			 shapeIndex++, depth++)
+		{
+			if (depth > owner.maxDepth())
+			{
+				owner.errorInfo = depth;
+				owner.result = UNSUPPORTED_OBJECT_DEPTH;
+				return false;
+			}
+
+			adds.emplace_back();
+			auto &newAdd = adds.back();
+			newAdd.depth = quint16(depth);
+			newAdd.shapeId = quint16(shapeIndex);
+			depthRef.endDepth++;
+		}
+	}
+
+	return true;
+}
+
+bool Converter::Process::SAMWriter::writeObjectAdds()
 {
 	if (adds.empty())
 		return true;
 
-	if (not writeFrameArrayLength(stream, adds.size()))
+	if (not writeDisplayCount(adds.size()))
 		return false;
 
 	for (const Frame::ObjectAdd &add : adds)
 	{
 		stream << quint16(add.depth);
 
-		switch (owner->mSamVersion)
+		switch (owner.owner->mSamVersion)
 		{
 			case SAM_VERSION_1:
+				Q_ASSERT(add.shapeId <= 255);
 				stream << quint8(add.shapeId);
 				break;
 
 			case SAM_VERSION_2:
+				Q_ASSERT(add.shapeId <= 65535);
 				stream << quint16(add.shapeId);
 				break;
 
@@ -1975,18 +1995,57 @@ bool Converter::Process::writeSAMFrameAdds(
 		}
 	}
 
-	return outputStreamOk(stream);
+	return outputStreamOk();
 }
 
-bool Converter::Process::writeSAMFrameMoves(
-	QDataStream &stream,
-	Frame::Moves &moves,
-	Frame::MoveMap &moveMap)
+bool Converter::Process::SAMWriter::prepareObjectMoves(const Frame &frame)
+{
+	moves.clear();
+
+	for (auto &move : frame.moves)
+	{
+		auto it = depthMap.find(move.depth);
+
+		if (it == depthMap.end())
+		{
+			continue;
+		}
+
+		auto &depthRef = it->second;
+
+		for (size_t depth = depthRef.startDepth;
+			 depth <= depthRef.endDepth; depth++)
+		{
+			if (depth > owner.maxDepth())
+			{
+				owner.errorInfo = quint32(depth);
+				owner.result = UNSUPPORTED_OBJECT_DEPTH;
+				return false;
+			}
+
+			moves.push_back(move);
+			auto &newMove = moves.back();
+			newMove.depth = quint16(depth);
+		}
+	}
+
+	for (auto &move : moves)
+	{
+		if (removes.count(move.depth) == 0 && 0 == (move.flags & PF_CHAR))
+		{
+			moveMap.erase(move.depth);
+		}
+	}
+
+	return true;
+}
+
+bool Converter::Process::SAMWriter::writeObjectMoves()
 {
 	if (moves.empty())
 		return true;
 
-	if (not writeFrameArrayLength(stream, moves.size()))
+	if (not writeDisplayCount(moves.size()))
 		return false;
 
 	for (Frame::ObjectMove &move : moves)
@@ -1998,18 +2057,18 @@ bool Converter::Process::writeSAMFrameMoves(
 		if (it != moveMap.end())
 			prev = it->second;
 
-		switch (owner->mSamVersion)
+		switch (owner.owner->mSamVersion)
 		{
 			case SAM_VERSION_1:
 
-				if (not writeSAMFrameMoveV1(stream, move, prev))
+				if (not writeObjectMoveV1(move, prev))
 					return false;
 
 				break;
 
 			case SAM_VERSION_2:
 
-				if (not writeSAMFrameMoveV2(stream, move, prev))
+				if (not writeObjectMoveV2(move, prev))
 					return false;
 
 				break;
@@ -2024,8 +2083,7 @@ bool Converter::Process::writeSAMFrameMoves(
 	return true;
 }
 
-bool Converter::Process::writeSAMFrameMoveV1(
-	QDataStream &stream,
+bool Converter::Process::SAMWriter::writeObjectMoveV1(
 	Frame::ObjectMove &move,
 	const Frame::ObjectMove &prev)
 {
@@ -2051,8 +2109,8 @@ bool Converter::Process::writeSAMFrameMoveV1(
 		depthAndFlags |= MOVEFLAGS_MATRIX;
 	}
 
-	int scaledX = scale(move.matrix.tx, CEIL);
-	int scaledY = scale(move.matrix.ty, CEIL);
+	int scaledX = owner.scale(move.matrix.tx, CEIL);
+	int scaledY = owner.scale(move.matrix.ty, CEIL);
 
 	if (scaledX > 32767 || scaledX < -32768 ||
 		scaledY > 32767 || scaledY < -32768)
@@ -2103,11 +2161,10 @@ bool Converter::Process::writeSAMFrameMoveV1(
 		stream << move.multColor.a;
 	}
 
-	return outputStreamOk(stream);
+	return outputStreamOk();
 }
 
-bool Converter::Process::writeSAMFrameMoveV2(
-	QDataStream &stream,
+bool Converter::Process::SAMWriter::writeObjectMoveV2(
 	Frame::ObjectMove &move,
 	const Frame::ObjectMove &prev)
 {
@@ -2146,8 +2203,8 @@ bool Converter::Process::writeSAMFrameMoveV2(
 			if (move.matrix.tx != temp.matrix.tx ||
 				move.matrix.ty != temp.matrix.ty)
 			{
-				scaledX = scale(move.matrix.tx, CEIL);
-				scaledY = scale(move.matrix.ty, CEIL);
+				scaledX = owner.scale(move.matrix.tx, CEIL);
+				scaledY = owner.scale(move.matrix.ty, CEIL);
 				depthAndFlags |= MOVEFLAGSV2_COORDS;
 			}
 		}
@@ -2194,24 +2251,53 @@ bool Converter::Process::writeSAMFrameMoveV2(
 		stream << move.addColor.a;
 	}
 
-	return outputStreamOk(stream);
+	return outputStreamOk();
 }
 
-bool Converter::Process::writeSAMFrameLabel(
-	QDataStream &stream, const QString &labelName)
+bool Converter::Process::SAMWriter::writeFrameLabel(const Frame &frame)
 {
+	auto &labelName = frame.labelName;
+
 	if (labelName.isEmpty())
 		return true;
 
-	return writeSAMString(stream, labelName);
+	return writeString(labelName);
 }
 
-bool Converter::Process::outputStreamOk(QDataStream &stream)
+bool Converter::Process::SAMWriter::writeFrameFlags(const Frame &frame)
+{
+	quint8 flags = 0;
+
+	if (not removes.empty())
+		flags |= FRAMEFLAGS_REMOVES;
+
+	if (not adds.empty())
+		flags |= FRAMEFLAGS_ADDS;
+
+	if (not moves.empty())
+		flags |= FRAMEFLAGS_MOVES;
+
+	if (not frame.labelName.isEmpty())
+		flags |= FRAMEFLAGS_LABEL;
+
+	stream << flags;
+
+	return outputStreamOk();
+}
+
+bool Converter::Process::SAMWriter::writeFrameCount()
+{
+	stream << quint16(owner.swf.frameCount);
+
+	return outputStreamOk();
+}
+
+bool Converter::Process::SAMWriter::outputStreamOk()
 {
 	if (stream.status() == QDataStream::Ok)
 		return true;
 
-	result = OUTPUT_FILE_WRITE_ERROR;
+	owner.result = OUTPUT_FILE_WRITE_ERROR;
 	return false;
 }
 
@@ -2220,6 +2306,8 @@ Converter::Process::Process(Converter *owner)
 	, currentFrame(nullptr)
 	, jpegTables(nullptr)
 	, result(OK)
+	, firstDepth(65535)
+	, depthMultiplier(0)
 {
 	memset(&swf, 0, sizeof(SWF));
 
