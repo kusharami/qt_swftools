@@ -44,8 +44,6 @@ enum
 };
 
 static Q_CONSTEXPR qreal TWIPS_PER_PIXELF = TWIPS_PER_PIXEL;
-static Q_CONSTEXPR qreal LONG_TO_FLOAT = 65536.0;
-static Q_CONSTEXPR qreal FIXEDTW_TO_FLOAT = FIXEDTW;
 static Q_CONSTEXPR qreal WORD_TO_FLOAT = 256.0;
 
 enum
