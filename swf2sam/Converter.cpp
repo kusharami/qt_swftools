@@ -1950,7 +1950,7 @@ bool Converter::Process::SAMWriter::prepareObjectAdds(const Frame &frame)
 		{
 			if (depth > owner.maxDepth())
 			{
-				owner.errorInfo = depth;
+				owner.errorInfo = quint32(depth);
 				owner.result = UNSUPPORTED_OBJECT_DEPTH;
 				return false;
 			}
