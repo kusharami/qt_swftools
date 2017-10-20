@@ -282,8 +282,7 @@ static quint8 cxToByte(S16 cx, S16 cadd, double alpha)
 {
 	if (cx > 256)
 		cx = 256;
-	else
-	if (cx < 0)
+	else if (cx < 0)
 		cx = 0;
 
 	qreal result = (cx / WORD_TO_FLOAT) * 255.0;
@@ -493,8 +492,7 @@ QString Converter::warnMessage(const Warning &warn)
 			return "SWF file format error.";
 
 		case INPUT_FILE_BAD_DATA_ERROR:
-			return QString("Broken SWF file (%1).")
-				   .arg(warn.info.toString());
+			return QString("Broken SWF file (%1).").arg(warn.info.toString());
 
 		case UNSUPPORTED_LINESTYLES:
 			return "Cannot export line styles to SAM.";
@@ -502,63 +500,59 @@ QString Converter::warnMessage(const Warning &warn)
 		case UNSUPPORTED_FILLSTYLE:
 		{
 			auto list = warn.info.toList();
-			return QString(
-				"Cannot export fill style '%1' "
-				"for shape #%2 to SAM.")
-				   .arg(fillStyleToStr(list.at(0).toInt()))
-				   .arg(list.at(1).toUInt());
+			return QString("Cannot export fill style '%1' "
+						   "for shape #%2 to SAM.")
+				.arg(fillStyleToStr(list.at(0).toInt()))
+				.arg(list.at(1).toUInt());
 		}
 
 		case UNSUPPORTED_VECTOR_SHAPE:
-			return QString(
-				"Cannot export shape to SAM "
-				"(Vector graphics shape #%1 is unsupported).")
-				   .arg(warn.info.toList().at(0).toUInt());
+			return QString("Cannot export shape to SAM "
+						   "(Vector graphics shape #%1 is unsupported).")
+				.arg(warn.info.toList().at(0).toUInt());
 
 		case UNSUPPORTED_NOBITMAP_SHAPE:
-			return QString(
-				"Cannot export shape to SAM "
-				"(No bitmap shape #%1 is unsupported).")
-				   .arg(warn.info.toList().at(0).toUInt());
+			return QString("Cannot export shape to SAM "
+						   "(No bitmap shape #%1 is unsupported).")
+				.arg(warn.info.toList().at(0).toUInt());
 
 		case UNSUPPORTED_OBJECT_FLAGS:
 			return QString("Cannot export object with flags 0x%1 to SAM.")
-				   .arg(warn.info.toUInt(), 4, 16, QChar('0'));
+				.arg(warn.info.toUInt(), 4, 16, QChar('0'));
 
 		case UNSUPPORTED_OBJECT_DEPTH:
 			return QString("Cannot export object with depth %1 to SAM.")
-				   .arg(warn.info.toUInt());
+				.arg(warn.info.toUInt());
 
 		case UNSUPPORTED_SHAPE_COUNT:
-			return QString(
-				"Cannot export more than %1 shapes to SAM.")
-				   .arg(warn.info.toUInt());
+			return QString("Cannot export more than %1 shapes to SAM.")
+				.arg(warn.info.toUInt());
 
 		case UNSUPPORTED_DISPLAY_COUNT:
 			return QString(
 				"Cannot export more than %1 places and/or removes to SAM.")
-				   .arg(warn.info.toUInt());
+				.arg(warn.info.toUInt());
 
 		case UNSUPPORTED_TAG:
 		{
 			return QString("Cannot export tag '%1' to SAM.")
-				   .arg(tagName(warn.info));
+				.arg(tagName(warn.info));
 		}
 
 		case UNKNOWN_IMAGE_ID:
 			return QString("Unknown image id %1.")
-				   .arg(warn.info.toUInt(), 4, 10, QChar('0'));
+				.arg(warn.info.toUInt(), 4, 10, QChar('0'));
 
 		case UNKNOWN_SHAPE_ID:
 			return QString("Unknown shape id %1.")
-				   .arg(warn.info.toUInt(), 4, 10, QChar('0'));
+				.arg(warn.info.toUInt(), 4, 10, QChar('0'));
 
 		case OUTPUT_DIR_ERROR:
 			return "Unable to make output directory.";
 
 		case OUTPUT_FILE_WRITE_ERROR:
 			return QString("Unable to write file '%1'.")
-				   .arg(QFileInfo(warn.info.toString()).fileName());
+				.arg(QFileInfo(warn.info.toString()).fileName());
 
 		case CONFIG_OPEN_ERROR:
 			return "Unable to open configuration file.";
@@ -651,9 +645,7 @@ static int findjpegboundary(U8 *data, int len)
 
 	for (t = 0; t < len - 4; t++)
 	{
-		if (data[t] == 0xff &&
-			data[t + 1] == 0xd9 &&
-			data[t + 2] == 0xff &&
+		if (data[t] == 0xff && data[t + 1] == 0xd9 && data[t + 2] == 0xff &&
 			data[t + 3] == 0xd8)
 		{
 			pos = t;
@@ -669,8 +661,8 @@ static QByteArray tagInflate(TAG *t, int len)
 
 	auto destlen = uLongf(len);
 
-	if (Z_OK != uncompress(
-			reinterpret_cast<Bytef *>(result.data()), &destlen,
+	if (Z_OK !=
+		uncompress(reinterpret_cast<Bytef *>(result.data()), &destlen,
 			&t->data[t->pos], t->len - t->pos))
 	{
 		return QByteArray();
@@ -750,8 +742,8 @@ int Image::exportImage(const QString &prefix, qreal scale)
 
 			writeLen = tagEnd - skip;
 
-			if (writeLen > 0 && jpegBuffer.write(
-					reinterpret_cast<char *>(&tag->data[skip]),
+			if (writeLen > 0 &&
+				jpegBuffer.write(reinterpret_cast<char *>(&tag->data[skip]),
 					writeLen) != writeLen)
 			{
 				return Converter::OUTPUT_FILE_WRITE_ERROR;
@@ -762,8 +754,8 @@ int Image::exportImage(const QString &prefix, qreal scale)
 			auto &bytes = jpegBuffer.buffer();
 
 			image = QImage::fromData(
-					reinterpret_cast<const quint8 *>(
-						bytes.constData()), bytes.count());
+				reinterpret_cast<const quint8 *>(bytes.constData()),
+				bytes.count());
 
 			if (image.isNull())
 			{
@@ -801,10 +793,9 @@ int Image::exportImage(const QString &prefix, qreal scale)
 					auto uncompressedSize = uLongf(alphaSize);
 					std::unique_ptr<Bytef[]> data(new Bytef[uncompressedSize]);
 
-					if (Z_OK != uncompress(
-							data.get(), &uncompressedSize,
-							&tag->data[end],
-							uLong(compressedAlphaSize)))
+					if (Z_OK !=
+						uncompress(data.get(), &uncompressedSize,
+							&tag->data[end], uLong(compressedAlphaSize)))
 					{
 						errorInfo = QString("Jpeg alpha failed");
 						return Converter::INPUT_FILE_BAD_DATA_ERROR;
@@ -839,7 +830,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 		case ST_DEFINEBITSLOSSLESS:
 		case ST_DEFINEBITSLOSSLESS2:
 		{
-			swf_GetU16(tag);	// skip index
+			swf_GetU16(tag); // skip index
 			int bpp = 1 << swf_GetU8(tag);
 
 			bool alpha = (tag->id == ST_DEFINEBITSLOSSLESS2);
@@ -866,10 +857,9 @@ int Image::exportImage(const QString &prefix, qreal scale)
 
 				case 32:
 				{
-					image = QImage(
-							width, height, alpha
-							? QImage::Format_RGBA8888_Premultiplied
-							: QImage::Format_RGBX8888);
+					image = QImage(width, height,
+						alpha ? QImage::Format_RGBA8888_Premultiplied
+							  : QImage::Format_RGBX8888);
 
 					break;
 				}
@@ -884,7 +874,7 @@ int Image::exportImage(const QString &prefix, qreal scale)
 			int imageSize = bytesPerLine * height;
 
 			auto data = tagInflate(
-					tag, imageSize + colorTableSize * (3 + (alpha ? 1 : 0)));
+				tag, imageSize + colorTableSize * (3 + (alpha ? 1 : 0)));
 
 			auto src = reinterpret_cast<const U8 *>(data.constData());
 
@@ -961,17 +951,16 @@ int Image::exportImage(const QString &prefix, qreal scale)
 	width = scaledWidth;
 	height = scaledHeight;
 
-	if (scaledWidth <= 0 || scaledWidth > 16386 ||
-		scaledHeight <= 0 || scaledHeight > 16386)
+	if (scaledWidth <= 0 || scaledWidth > 16386 || scaledHeight <= 0 ||
+		scaledHeight > 16386)
 	{
 		return Converter::BAD_SCALE_VALUE;
 	}
 
 	if (scaledWidth != image.width() || scaledHeight != image.height())
 	{
-		image = image.scaled(
-				scaledWidth, scaledHeight,
-				Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+		image = image.scaled(scaledWidth, scaledHeight,
+			Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
 	}
 
 	if (not QDir().mkpath(QFileInfo(prefix).path()))
@@ -1026,10 +1015,8 @@ bool Converter::Process::handleFrameLabel(TAG *tag)
 	}
 
 	auto str = reinterpret_cast<char *>(tag->data);
-	auto labelName =
-		swf.fileVersion >= 6
-		? QString::fromUtf8(str)
-		: QString::fromLocal8Bit(str);
+	auto labelName = swf.fileVersion >= 6 ? QString::fromUtf8(str)
+										  : QString::fromLocal8Bit(str);
 
 	auto &renameMap = owner->mLabelRenameMap;
 	auto it = renameMap.find(labelName);
@@ -1059,8 +1046,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 	SWFPLACEOBJECT srcObj;
 	swf_GetPlaceObject(tag, &srcObj);
 
-	if (srcObj.flags & ~(PF_CHAR | PF_CXFORM |
-						 PF_MATRIX | PF_MOVE | PF_NAME))
+	if (srcObj.flags & ~(PF_CHAR | PF_CXFORM | PF_MATRIX | PF_MOVE | PF_NAME))
 	{
 		Warning warn;
 		warn.info = srcObj.flags;
@@ -1139,8 +1125,7 @@ bool Converter::Process::handlePlaceObject(TAG *tag)
 				if (a0 > 256)
 				{
 					a0 = 256;
-				} else
-				if (a0 < 0)
+				} else if (a0 < 0)
 				{
 					a0 = 0;
 				}
@@ -1269,7 +1254,7 @@ bool Converter::Process::handleShape(TAG *tag)
 
 		switch (fillStyle.type)
 		{
-			case 0x40:	// BITMAP FILL
+			case 0x40: // BITMAP FILL
 			case 0x41:
 			case 0x42:
 			case 0x43:
@@ -1303,7 +1288,7 @@ bool Converter::Process::handleShape(TAG *tag)
 				break;
 			}
 
-			case 0x00:	// SOLID FILL
+			case 0x00: // SOLID FILL
 			{
 				if (owner->mSamVersion != SAM_VERSION_1)
 				{
@@ -1317,13 +1302,12 @@ bool Converter::Process::handleShape(TAG *tag)
 
 					break;
 				}
-			}	// fall through
+			} // fall through
 
 			default:
 			{
-				warn.info = QVariantList()	<< fillStyle.type
-											<< shapeId
-											<< quint32(index);
+				warn.info = QVariantList()
+					<< fillStyle.type << shapeId << quint32(index);
 				warn.code = UNSUPPORTED_FILLSTYLE;
 
 				if (not owner->mSkipUnsupported)
@@ -1575,7 +1559,7 @@ bool Converter::Process::exportSAM()
 
 		if (not writer.exec())
 			return false;
-	}	// close writer
+	} // close writer
 
 	if (not samFile.commit())
 	{
@@ -1600,8 +1584,7 @@ bool Converter::Process::exportSAM()
 	return true;
 }
 
-Converter::Process::SAMWriter::SAMWriter(
-	Process &owner, QIODevice *device)
+Converter::Process::SAMWriter::SAMWriter(Process &owner, QIODevice *device)
 	: owner(owner)
 	, stream(device)
 {
@@ -1691,8 +1674,8 @@ bool Converter::Process::SAMWriter::writeShapesV1()
 		int scaledX = owner.scale(shape.matrix.tx, CEIL);
 		int scaledY = owner.scale(shape.matrix.ty, CEIL);
 
-		if (scaledX < -32768 || scaledX > 32767 ||
-			scaledY < -32768 || scaledY > 32767)
+		if (scaledX < -32768 || scaledX > 32767 || scaledY < -32768 ||
+			scaledY > 32767)
 		{
 			owner.result = BAD_SCALE_VALUE;
 			return false;
@@ -1738,14 +1721,12 @@ bool Converter::Process::SAMWriter::writeShapesV2()
 			auto bb = shape.vertices.boundingRect();
 			qreal scale = owner.owner->mScale;
 
-			scaledWidth =
-				qCeil((bb.width() / TWIPS_PER_PIXELF) * scale);
-			scaledHeight =
-				qCeil((bb.height() / TWIPS_PER_PIXELF) * scale);
+			scaledWidth = qCeil((bb.width() / TWIPS_PER_PIXELF) * scale);
+			scaledHeight = qCeil((bb.height() / TWIPS_PER_PIXELF) * scale);
 		}
 
-		if (scaledWidth < 0 || scaledHeight < 0 ||
-			scaledWidth > 65535 || scaledHeight > 65535)
+		if (scaledWidth < 0 || scaledHeight < 0 || scaledWidth > 65535 ||
+			scaledHeight > 65535)
 		{
 			owner.result = BAD_SCALE_VALUE;
 			return false;
@@ -1823,8 +1804,8 @@ bool Converter::Process::SAMWriter::prepareObjectRemoves(const Frame &frame)
 
 		auto &depthRef = it->second;
 
-		for (size_t depth = depthRef.startDepth;
-			 depth <= depthRef.endDepth; depth++)
+		for (size_t depth = depthRef.startDepth; depth <= depthRef.endDepth;
+			 depth++)
 		{
 			if (depth > owner.maxDepth())
 			{
@@ -1850,14 +1831,10 @@ bool Converter::Process::SAMWriter::writeFrames()
 
 	for (const auto &frame : owner.frames)
 	{
-		if (not prepareObjectRemoves(frame) ||
-			not prepareObjectAdds(frame) ||
-			not prepareObjectMoves(frame) ||
-			not writeFrameFlags(frame) ||
-			not writeObjectRemoves() ||
-			not writeObjectAdds() ||
-			not writeObjectMoves() ||
-			not writeFrameLabel(frame))
+		if (not prepareObjectRemoves(frame) || not prepareObjectAdds(frame) ||
+			not prepareObjectMoves(frame) || not writeFrameFlags(frame) ||
+			not writeObjectRemoves() || not writeObjectAdds() ||
+			not writeObjectMoves() || not writeFrameLabel(frame))
 		{
 			return false;
 		}
@@ -1943,8 +1920,7 @@ bool Converter::Process::SAMWriter::prepareObjectAdds(const Frame &frame)
 		depthRef.endDepth = depth - 1;
 
 		for (size_t shapeIndex = shapeRef.startIndex;
-			 shapeIndex <= shapeRef.endIndex;
-			 shapeIndex++, depth++)
+			 shapeIndex <= shapeRef.endIndex; shapeIndex++, depth++)
 		{
 			if (depth > owner.maxDepth())
 			{
@@ -2011,8 +1987,8 @@ bool Converter::Process::SAMWriter::prepareObjectMoves(const Frame &frame)
 
 		auto &depthRef = it->second;
 
-		for (size_t depth = depthRef.startDepth;
-			 depth <= depthRef.endDepth; depth++)
+		for (size_t depth = depthRef.startDepth; depth <= depthRef.endDepth;
+			 depth++)
 		{
 			if (depth > owner.maxDepth())
 			{
@@ -2027,12 +2003,19 @@ bool Converter::Process::SAMWriter::prepareObjectMoves(const Frame &frame)
 		}
 	}
 
+	auto tempRemoves = removes;
 	for (auto &move : moves)
 	{
-		if (removes.count(move.depth) == 0 && 0 == (move.flags & PF_CHAR))
+		auto it = tempRemoves.find(move.depth);
+		if (it != tempRemoves.end() && 0 != (move.flags & PF_CHAR))
 		{
-			moveMap.erase(move.depth);
+			tempRemoves.erase(it);
 		}
+	}
+
+	for (quint16 removeDepth : tempRemoves)
+	{
+		moveMap.erase(removeDepth);
 	}
 
 	return true;
@@ -2082,8 +2065,7 @@ bool Converter::Process::SAMWriter::writeObjectMoves()
 }
 
 bool Converter::Process::SAMWriter::writeObjectMoveV1(
-	Frame::ObjectMove &move,
-	const Frame::ObjectMove &prev)
+	Frame::ObjectMove &move, const Frame::ObjectMove &prev)
 {
 	Q_ASSERT(move.depth <= DEPTHV1_MAX);
 	quint16 depthAndFlags = move.depth & DEPTHV1_MASK;
@@ -2099,10 +2081,8 @@ bool Converter::Process::SAMWriter::writeObjectMoveV1(
 		move.addColor = prev.addColor;
 	}
 
-	if (move.matrix.sx != 65536 ||
-		move.matrix.sy != 65536 ||
-		move.matrix.r0 != 0 ||
-		move.matrix.r1 != 0)
+	if (move.matrix.sx != 65536 || move.matrix.sy != 65536 ||
+		move.matrix.r0 != 0 || move.matrix.r1 != 0)
 	{
 		depthAndFlags |= MOVEFLAGS_MATRIX;
 	}
@@ -2110,8 +2090,8 @@ bool Converter::Process::SAMWriter::writeObjectMoveV1(
 	int scaledX = owner.scale(move.matrix.tx, CEIL);
 	int scaledY = owner.scale(move.matrix.ty, CEIL);
 
-	if (scaledX > 32767 || scaledX < -32768 ||
-		scaledY > 32767 || scaledY < -32768)
+	if (scaledX > 32767 || scaledX < -32768 || scaledY > 32767 ||
+		scaledY < -32768)
 	{
 		depthAndFlags |= MOVEFLAGS_LONGCOORDS;
 	}
@@ -2163,8 +2143,7 @@ bool Converter::Process::SAMWriter::writeObjectMoveV1(
 }
 
 bool Converter::Process::SAMWriter::writeObjectMoveV2(
-	Frame::ObjectMove &move,
-	const Frame::ObjectMove &prev)
+	Frame::ObjectMove &move, const Frame::ObjectMove &prev)
 {
 	Q_ASSERT(move.depth <= DEPTHV2_MAX);
 	quint16 depthAndFlags = move.depth & DEPTHV2_MASK;
@@ -2326,8 +2305,7 @@ Converter::Process::Process(Converter *owner)
 		return;
 	}
 
-	prefix = owner->outputFilePath(
-			QFileInfo(owner->mInputFilePath).baseName());
+	prefix = owner->outputFilePath(QFileInfo(owner->mInputFilePath).baseName());
 
 	readSWF() && parseSWF() && exportSAM();
 }
