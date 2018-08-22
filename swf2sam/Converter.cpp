@@ -1344,13 +1344,20 @@ bool Converter::Process::handleShape(TAG *tag)
 
 	while (line && ok)
 	{
-		if (line->fillstyle0 != 0 && not owner->mSkipUnsupported)
+		int fs0 = line->fillstyle0;
+		int fs1 = line->fillstyle1;
+		if (fs0 != 0)
+		{
+			std::swap(fs0, fs1);
+		}
+
+		if (fs0 != 0 && not owner->mSkipUnsupported)
 		{
 			ok = false;
 			break;
 		}
 
-		auto it = fillStyleMap.find(line->fillstyle1);
+		auto it = fillStyleMap.find(fs1);
 
 		if (it != fillStyleMap.end())
 		{
