@@ -14,7 +14,13 @@ DESTDIR = $$BIN_DIR
 
 include(../libs/swflibs.pri)
 
-QT_THIRDPARTY_PATH = $$[QT_INSTALL_PREFIX]/../Src/qtbase/src/3rdparty
+exists($$(QT_SOURCE_PATH)) {
+    QT_SOURCE_PATH = $$(QT_SOURCE_PATH)
+} else {
+    QT_SOURCE_PATH = $$[QT_INSTALL_PREFIX]/../Src
+}
+
+QT_THIRDPARTY_PATH = $$QT_SOURCE_PATH/qtbase/src/3rdparty
 
 INCLUDEPATH += $$QT_THIRDPARTY_PATH/freetype/include/
 
