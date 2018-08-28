@@ -1694,8 +1694,8 @@ bool Converter::Process::SAMWriter::writeShapesV1()
 		stream << quint16(scaledWidth);
 		stream << quint16(scaledHeight);
 		stream << qint32(shape.matrix.sx);
-		stream << qint32(shape.matrix.r1);
-		stream << qint32(shape.matrix.r0);
+		stream << qint32(qRound(shape.matrix.r1 / TWIPS_PER_PIXELF));
+		stream << qint32(qRound(shape.matrix.r0 / TWIPS_PER_PIXELF));
 		stream << qint32(shape.matrix.sy);
 		stream << qint16(scaledX);
 		stream << qint16(scaledY);
@@ -1782,8 +1782,8 @@ bool Converter::Process::SAMWriter::writeShapesV2()
 			int scaledX = owner.scale(shape.matrix.tx, CEIL);
 			int scaledY = owner.scale(shape.matrix.ty, CEIL);
 			stream << qint32(qRound(shape.matrix.sx / TWIPS_PER_PIXELF));
-			stream << qint32(shape.matrix.r1);
-			stream << qint32(shape.matrix.r0);
+			stream << qint32(qRound(shape.matrix.r1 / TWIPS_PER_PIXELF));
+			stream << qint32(qRound(shape.matrix.r0 / TWIPS_PER_PIXELF));
 			stream << qint32(qRound(shape.matrix.sy / TWIPS_PER_PIXELF));
 			stream << qint32(scaledX);
 			stream << qint32(scaledY);
