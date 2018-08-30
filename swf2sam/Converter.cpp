@@ -807,7 +807,8 @@ int Image::exportImage(const QString &prefix, qreal scale)
 						return Converter::INPUT_FILE_BAD_DATA_ERROR;
 					}
 
-					image = image.convertToFormat(QImage::Format_RGBA8888);
+					image = image.convertToFormat(
+						QImage::Format_RGBA8888_Premultiplied);
 
 					auto srcAlpha = data.get();
 
