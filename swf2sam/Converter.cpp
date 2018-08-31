@@ -80,18 +80,17 @@ enum
 
 enum
 {
-	DEPTHV1_MASK = 0x3FF,
+	DEPTHV1_MASK = 0x7FF,
 	DEPTHV1_MAX = DEPTHV1_MASK,
 	DEPTHV2_MASK = 0xFFF,
 	DEPTHV2_MAX = DEPTHV2_MASK
 };
 
+static const char SAM_Signature[] = "MAS.";
 enum
 {
-	SAM_SIGN_SIZE = 4
+	SAM_SIGN_SIZE = sizeof(SAM_Signature) - 1
 };
-
-static const char SAM_Signature[] = "MAS.";
 
 struct SAM_Header
 {
